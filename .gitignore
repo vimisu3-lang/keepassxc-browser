@@ -11,3 +11,8 @@
 .xz
 node_modules
 test-results
+
+# PWSave build artifacts
+manifest_default.json
+dist/
+pwsave_*.zip

@@ -3,6 +3,20 @@
 const kpxcEvent = {};
 
 kpxcEvent.onMessage = async function(request, sender) {
+    if (!request || !request.action) {
+        return undefined;
+    }
+
+    // New vault/sync messages (popup & options). vaultActions is created by init.js
+    // synchronously at module load, so it is always defined before any message arrives.
+    if (typeof vaultActions !== 'undefined' && request.action in vaultActions) {
+        if (!Object.hasOwn(sender, 'tab') || sender?.tab?.id < 1) {
+            sender.tab = {};
+            sender.tab.id = tabs.currentTabId;
+        }
+        return await vaultActions[request.action](sender.tab, request.args);
+    }
+
     if (request.action in kpxcEvent.messageHandlers) {
         if (!Object.hasOwn(sender, 'tab') || sender?.tab?.id < 1) {
             sender.tab = {};
@@ -13,18 +27,19 @@ kpxcEvent.onMessage = async function(request, sender) {
     }
 };
 
-kpxcEvent.showStatus = async function(tab, configured, internalPoll, forceShowDefault = false) {
+kpxcEvent.showStatus = async function(_tab, configured, internalPoll, forceShowDefault = false) {
+    keepass.syncStatus();
+
     let keyId = null;
-    if (configured && keepass.databaseHash !== ''
-        && Object.hasOwn(keepass.keyRing, keepass.databaseHash)) {
-        keyId = keepass.keyRing[keepass.databaseHash].id;
+    if (configured && keepass.databaseHash !== '') {
+        keyId = 'vault';
     }
 
     if (!internalPoll || forceShowDefault) {
-        browserAction.showDefault(tab);
+        browserAction.showDefault(_tab);
     }
 
-    const currentTab = tabs.getTabFromId(tab.id);
+    const currentTab = tabs.getTabFromId(_tab.id);
     const errorMessage = currentTab?.errorMessage ?? undefined;
     const usernameFieldDetected = currentTab?.usernameFieldDetected ?? false;
     const iframeDetected = currentTab?.iframeDetected ?? false;
@@ -52,30 +67,20 @@ kpxcEvent.onLoadSettings = async function() {
     });
 };
 
-kpxcEvent.onLoadKeyRing = async function() {
-    const item = await browser.storage.local.get({ 'keyRing': {} }).catch((err) => {
-        logError('kpxcEvent.onLoadKeyRing error: ' + err);
-        return Promise.reject();
-    });
-
-    keepass.keyRing = item.keyRing;
-    if (keepass.isAssociated() && !keepass.keyRing[keepass.associated.hash]) {
-        keepass.associated = {
-            value: false,
-            hash: null
-        };
-    }
-
-    return item.keyRing;
-};
-
 kpxcEvent.onSaveSettings = async function(tab, settings) {
     browser.storage.local.set({ 'settings': settings });
+    // Keep the vault settings in sync (colorTheme alias lives in vault settings).
+    if (typeof vaultManager !== 'undefined' && settings && 'colorTheme' in settings) {
+        try {
+            await vaultManager.updateSettings({ colorTheme: settings.colorTheme });
+        } catch (err) {
+            logError('onSaveSettings vault sync error: ' + err);
+        }
+    }
     kpxcEvent.onLoadSettings(tab);
 };
 
 kpxcEvent.onGetStatus = async function(tab, args = []) {
-    // When internalPoll is true the event is triggered from content script in intervals -> don't poll KeePassXC
     try {
         const [ internalPoll = false, triggerUnlock = false, forceShowDefault ] = args;
         if (!internalPoll) {
@@ -123,28 +128,11 @@ kpxcEvent.onGetTabInformation = async function(tab) {
 };
 
 kpxcEvent.onGetConnectedDatabase = async function() {
+    keepass.syncStatus();
     return Promise.resolve({
-        count: Object.keys(keepass.keyRing).length,
-        identifier: (keepass.keyRing[keepass.associated.hash]) ? keepass.keyRing[keepass.associated.hash].id : null
+        count: keepass.isKeePassXCAvailable ? 1 : 0,
+        identifier: keepass.isKeePassXCAvailable ? 'vault' : null
     });
-};
-
-kpxcEvent.onGetKeePassXCVersions = async function(tab) {
-    if (keepass.currentKeePassXC === '') {
-        await keepass.getDatabaseHash(tab);
-        return { 'current': keepass.currentKeePassXC, 'latest': keepass.latestKeePassXC.version };
-    }
-
-    return { 'current': keepass.currentKeePassXC, 'latest': keepass.latestKeePassXC.version };
-};
-
-kpxcEvent.onCheckUpdateKeePassXC = async function() {
-    await keepass.checkForNewKeePassXCVersion();
-    return { current: keepass.currentKeePassXC, latest: keepass.latestKeePassXC.version };
-};
-
-kpxcEvent.onUpdateAvailableKeePassXC = async function() {
-    return (Number(page.settings.checkUpdateKeePassXC) !== CHECK_UPDATE_NEVER) ? await keepass.keePassXCUpdateAvailable() : false;
 };
 
 kpxcEvent.onRemoveCredentialsFromTabInformation = async function(tab) {
@@ -209,26 +197,15 @@ kpxcEvent.pageClearLogins = async function(tab, alreadyCalled) {
     }
 };
 
-kpxcEvent.compareMultipleVersions = async function(tab, args = []) {
-    return keepass.compareMultipleVersions(args[0], args[1]);
-};
-
 kpxcEvent.getIsKeePassXCAvailable = async function() {
-    return keepass.isKeePassXCAvailable;
+    keepass.syncStatus();
+    // "Connected" means the vault is unlocked and ready to fill.
+    return keepass.isConnected;
 };
 
-kpxcEvent.hideGettingStartedGuideAlert = async function(tab) {
-    const settings = await kpxcEvent.onLoadSettings();
-    settings.showGettingStartedGuideAlert = false;
-
-    await kpxcEvent.onSaveSettings(tab, settings);
-};
-
-kpxcEvent.hideTroubleshootingGuideAlert = async function(tab) {
-    const settings = await kpxcEvent.onLoadSettings();
-    settings.showTroubleshootingGuideAlert = false;
-
-    await kpxcEvent.onSaveSettings(tab, settings);
+// Chromium-only extension (MV3). Content uses this to branch Firefox-specific code.
+kpxcEvent.getIsFirefox = async function() {
+    return false;
 };
 
 // Bounce message back to all frames
@@ -238,10 +215,6 @@ kpxcEvent.sendBackToTabs = async function(tab, args = []) {
     }
 };
 
-kpxcEvent.getFeaturesList = async function() {
-    return keepass.featuresList;
-};
-
 // All methods named in this object have to be declared BEFORE this!
 kpxcEvent.messageHandlers = {
     'add_credentials': keepass.addCredentials,
@@ -249,32 +222,27 @@ kpxcEvent.messageHandlers = {
     'banner_get_position': page.getBannerPosition,
     'banner_set_position': page.setBannerPosition,
     'check_database_hash': keepass.checkDatabaseHash,
-    'check_update_keepassxc': kpxcEvent.onCheckUpdateKeePassXC,
     'create_new_group': keepass.createNewGroup,
-    'enable_automatic_reconnect': keepass.enableAutomaticReconnect,
     'disable_automatic_reconnect': keepass.disableAutomaticReconnect,
+    'enable_automatic_reconnect': keepass.enableAutomaticReconnect,
     'fill_http_auth': page.fillHttpAuth,
     'frame_message': kpxcEvent.sendBackToTabs,
     'generate_password': keepass.generatePassword,
     'get_color_theme': kpxcEvent.getColorTheme,
     'get_connected_database': kpxcEvent.onGetConnectedDatabase,
-    'get_database_hash': keepass.getDatabaseHash,
     'get_database_groups': keepass.getDatabaseGroups,
+    'get_database_hash': keepass.getDatabaseHash,
     'get_error_message': keepass.getErrorMessage,
-    'get_features_list': kpxcEvent.getFeaturesList,
-    'get_keepassxc_versions': kpxcEvent.onGetKeePassXCVersions,
     'get_login_list': page.getLoginList,
     'get_status': kpxcEvent.onGetStatus,
     'get_tab_information': kpxcEvent.onGetTabInformation,
     'get_totp': keepass.getTotp,
-    'hide_getting_started_guide_alert': kpxcEvent.hideGettingStartedGuideAlert,
-    'hide_troubleshooting_guide_alert': kpxcEvent.hideTroubleshootingGuideAlert,
     'iframe_detected': kpxcEvent.onIframeDetected,
     'init_http_auth': kpxcEvent.initHttpAuth,
     'is_connected': kpxcEvent.getIsKeePassXCAvailable,
+    'is_firefox': kpxcEvent.getIsFirefox,
     'is_iframe_allowed': page.isIframeAllowed,
     'is_site_ignored': page.isSiteIgnored,
-    'load_keyring': kpxcEvent.onLoadKeyRing,
     'load_settings': kpxcEvent.onLoadSettings,
     'lock_database': kpxcEvent.lockDatabase,
     'page_clear_logins': kpxcEvent.pageClearLogins,
@@ -289,21 +257,17 @@ kpxcEvent.messageHandlers = {
     'page_set_login_id': page.setLoginId,
     'page_set_manual_fill': page.setManualFill,
     'page_set_submitted': page.setSubmitted,
-    'passkeys_get': keepass.passkeysGet,
-    'passkeys_register': keepass.passkeysRegister,
     'password_get_filled': kpxcEvent.passwordGetFilled,
     'password_set_filled': kpxcEvent.passwordSetFilled,
     'popup_login': kpxcEvent.onLoginPopup,
     'reconnect': kpxcEvent.onReconnect,
     'remove_credentials_from_tab_information': kpxcEvent.onRemoveCredentialsFromTabInformation,
-    'request_autotype': keepass.requestAutotype,
     'reset_all_settings': page.resetAllSettings,
     'retrieve_credentials': page.retrieveCredentials,
+    'save_settings': kpxcEvent.onSaveSettings,
     'show_default_browseraction': browserAction.showDefault,
     'update_credentials': keepass.updateCredentials,
-    'username_field_detected': kpxcEvent.onUsernameFieldDetected,
-    'save_settings': kpxcEvent.onSaveSettings,
-    'update_available_keepassxc': kpxcEvent.onUpdateAvailableKeePassXC,
     'update_context_menu': page.updateContextMenu,
-    'update_popup': page.updatePopup
+    'update_popup': page.updatePopup,
+    'username_field_detected': kpxcEvent.onUsernameFieldDetected
 };

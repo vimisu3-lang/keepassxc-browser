@@ -7,17 +7,19 @@
     "@eslint/js": "^9.39.1",
     "@playwright/test": "^1.60.0",
     "@types/node": "^20.14.10",
-    "eslint": "^9.39.1"
+    "@vitest/coverage-v8": "^4.1.11",
+    "eslint": "^9.39.1",
+    "jsdom": "^30.0.1",
+    "vitest": "^4.1.11"
   },
   "dependencies": {
     "@npmcli/fs": "^2.1.0"
   },
   "scripts": {
     "build": "node build.js",
-    "debug:chromium": "cp dist/manifest_chromium.json keepassxc-browser/manifest.json",
-    "debug:firefox": "cp dist/manifest_firefox.json keepassxc-browser/manifest.json",
     "lint": "npx eslint --no-warn-ignored keepassxc-browser/**/*.js",
-    "tests": "npx playwright test"
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "repository": {
     "type": "git",

@@ -4,10 +4,8 @@ const $ = function(elem) {
     return document.querySelector(elem);
 };
 
-function updateAvailableResponse(available) {
-    if (available) {
-        $('#update-available').show();
-    }
+function updateAvailableResponse(_available) {
+    // KeePassXC update check removed (standalone vault)
 }
 
 async function initSettings() {
@@ -58,7 +56,5 @@ async function getLoginData(useBasicAuth = false) {
         document.addEventListener('DOMContentLoaded', initSettings);
     }
 
-    updateAvailableResponse(await browser.runtime.sendMessage({
-        action: 'update_available_keepassxc'
-    }));
+    updateAvailableResponse(false);
 })();

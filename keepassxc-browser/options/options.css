@@ -305,3 +305,16 @@ button#sitePreferencesCancelEdit {
         display: block;
     }
 }
+
+/* PWSave standalone: tab visibility */
+.tab {
+    display: none;
+}
+
+.tab.active {
+    display: block;
+}
+
+.no-transitions * {
+    transition: none !important;
+}

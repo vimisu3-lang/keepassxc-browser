@@ -1,11 +1,11 @@
 {
     "manifest_version": 3,
-    "name": "KeePassXC-Browser",
-    "version": "1.10.3",
-    "version_name": "1.10.3",
+    "name": "PWSave - Password Manager",
+    "version": "2.0.0",
+    "version_name": "2.0.0",
     "minimum_chrome_version": "124",
-    "description": "__MSG_extensionDescription__",
-    "author": "KeePassXC Team",
+    "description": "Standalone password manager: encrypted local vault (AES-256-GCM + PBKDF2) with Google Drive sync, auto-fill, TOTP and HTTP Basic Auth support.",
+    "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAogRkV6OFuVFmEt88LCTsu2HNuvyqGmjqvVjky5Wyh4dwfjknADOTm29nDbD4/4g8gSMaeYdplMjyuGFRZzrOITbZU0MNw+Xxing/Fn2Xq1pLK+eIgyjXfet30Mm+HGzOenCNOIhwhmI+JrPKCJ4YjnC4nBnHxE55vjWCrXBnwc5taKZDOIJvBKgqgsvjL2098Sem55NkPg68rBMmjsXjQP/EvUmy1r813JwI7UWjAjWbR6r0LvQWi53x/RJJsfIBpHNx78iORd9hXz3/apIp8iiJO1K5mZevc9Q1Vz5HKyIcSNFanXRKY0rvy+2yeQKwH7hShDcavqG+ZnVOqvd2XQIDAQAB",
     "icons": {
         "16": "icons/keepassxc_16x16.png",
         "48": "icons/keepassxc_48x48.png",
@@ -23,7 +23,7 @@
             "38": "icons/keepassxc_38x38.png",
             "64": "icons/keepassxc_64x64.png"
         },
-        "default_title": "KeePassXC-Browser",
+        "default_title": "PWSave",
         "default_popup": "popups/popup.html"
     },
     "options_ui": {
@@ -64,75 +64,54 @@
             ],
             "run_at": "document_idle",
             "all_frames": true
-        },
-        {
-            "matches": [
-                "<all_urls>"
-            ],
-            "exclude_matches": [
-                "*://*/*.xml*",
-                "file:///*.xml*"
-            ],
-            "js": [
-                "content/passkeys-inject.js",
-                "content/passkeys-utils.js"
-            ],
-            "run_at": "document_start",
-            "all_frames": true
         }
     ],
     "commands": {
         "fill_username_password": {
-            "description": "__MSG_contextMenuFillUsernameAndPassword__",
+            "description": "Fill username and password",
             "suggested_key": {
                 "default": "Alt+Shift+U",
                 "mac": "MacCtrl+Shift+U"
             }
         },
         "fill_password": {
-            "description": "__MSG_contextMenuFillPassword__",
+            "description": "Fill password",
             "suggested_key": {
                 "default": "Alt+Shift+P",
                 "mac": "MacCtrl+Shift+P"
             }
         },
         "fill_totp": {
-            "description": "__MSG_contextMenuFillTOTP__",
+            "description": "Fill TOTP",
             "suggested_key": {
                 "default": "Alt+Shift+O",
                 "mac": "MacCtrl+Shift+O"
             }
         },
         "show_password_generator": {
-            "description": "__MSG_contextMenuShowPasswordGenerator__",
+            "description": "Show password generator",
             "suggested_key": {
                 "default": "Alt+Shift+G",
                 "mac": "MacCtrl+Shift+G"
             }
         },
         "save_credentials": {
-            "description": "__MSG_contextMenuSaveCredentials__"
+            "description": "Save credentials"
         },
         "redetect_fields": {
-            "description": "__MSG_popupRedetectButton__"
+            "description": "Redetect fields"
         },
         "choose_credential_fields": {
-            "description": "__MSG_popupChooseCredentialsText__"
+            "description": "Choose credential fields"
         },
         "retrieve_credentials_forced": {
-            "description": "__MSG_credentialsRetrieveButton__"
-        },
-        "request_autotype": {
-            "description": "__MSG_contextMenuRequestGlobalAutoType__"
-        },
-        "reopen_database": {
-            "description": "__MSG_popupReopenButton__"
+            "description": "Retrieve credentials"
         },
         "lock_database": {
-            "description": "__MSG_lockDatabase__"
+            "description": "Lock vault"
         },
         "reload_extension": {
-            "description": "__MSG_popupReloadButton__"
+            "description": "Reload extension"
         }
     },
     "web_accessible_resources": [
@@ -152,8 +131,7 @@
                 "css/notification.css",
                 "css/pwgen.css",
                 "css/username.css",
-                "css/totp.css",
-                "content/passkeys.js"
+                "css/totp.css"
             ],
             "matches": [
                 "https://*/*",
@@ -163,28 +141,33 @@
     ],
     "permissions": [
         "activeTab",
+        "alarms",
         "clipboardWrite",
         "contextMenus",
         "cookies",
-        "nativeMessaging",
+        "identity",
         "notifications",
         "offscreen",
         "storage",
         "tabs",
+        "unlimitedStorage",
         "webNavigation",
         "webRequest",
         "webRequestAuthProvider"
     ],
-    "optional_permissions": [
-        "privacy"
-    ],
+    "oauth2": {
+        "client_id": "238766514589-t8r142g1g751eu8dnne1qqb0kb7mrkl7.apps.googleusercontent.com",
+        "scopes": [
+            "https://www.googleapis.com/auth/drive.appdata"
+        ]
+    },
     "content_security_policy": {
         "extension_pages": "script-src 'self'"
     },
     "host_permissions": [
         "<all_urls>",
-        "https://*/*",
-        "http://*/*"
+        "https://www.googleapis.com/*",
+        "https://api.pwnedpasswords.com/*"
     ],
     "storage": {
         "managed_schema": "managed_storage.json"

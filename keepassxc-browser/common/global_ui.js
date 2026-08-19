@@ -8,6 +8,23 @@ HTMLElement.prototype.hide = function() {
     this.style.display = 'none';
 };
 
+const applyTheme = function(theme = 'system') {
+    document.documentElement.setAttribute('data-bs-theme', theme === 'system'
+        ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+        : theme);
+};
+
+const loadColorTheme = async function() {
+    let theme = 'system';
+    try {
+        const response = await browser.runtime.sendMessage({ action: 'pwsave_get_settings' });
+        theme = response?.data?.colorTheme || response?.data?.theme || 'system';
+    } catch (err) {
+        theme = 'system';
+    }
+    applyTheme(theme);
+};
+
 // Disables the browser's internal password manager and let the extension take the control
 const updateDefaultPasswordManager = async function() {
     const permissionResponse = await browser.permissions.request({ permissions: [ 'privacy' ] });

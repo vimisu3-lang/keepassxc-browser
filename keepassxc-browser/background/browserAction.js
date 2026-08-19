@@ -11,21 +11,20 @@ browserAction.show = async function(tab, popupData) {
         path: await browserAction.generateIconName(popupData.iconType)
     });
 
-    if (popupData.popup && tab?.id) {
+    const currentTab = tabs.getTabFromId(tab?.id);
+
+    // Standalone vault manager: the toolbar popup is always the vault UI.
+    // The login list is only shown when the content script opens popup_login.html
+    // via the inline username icon.
+    if (popupData.popup === 'popup_login') {
+        browserAction.setBadgeText(tab?.id, currentTab?.loginList.length);
+    } else if (popupData.popup === 'popup_httpauth') {
+        // HTTP Basic Auth with multiple logins still needs the selection popup
         browserActionWrapper.setPopup({
             tabId: tab.id,
-            popup: `popups/${popupData.popup}.html`
+            popup: 'popups/popup_httpauth.html'
         });
-
-        let badgeText = '';
-        const currentTab = tabs.getTabFromId(tab.id);
-        if (popupData.popup === 'popup_login') {
-            badgeText = currentTab?.loginList.length;
-        } else if (popupData.popup === 'popup_httpauth') {
-            badgeText = currentTab?.basicAuthLogins?.loginList?.length;
-        }
-
-        browserAction.setBadgeText(tab?.id, badgeText);
+        browserAction.setBadgeText(tab?.id, currentTab?.basicAuthLogins?.loginList?.length);
     }
 };
 
@@ -56,8 +55,15 @@ browserAction.showDefault = async function(tab) {
     const currentTab = tabs.getTabFromId(tab?.id);
     if (currentTab?.loginList.length > 0) {
         popupData.iconType = 'normal';
-        popupData.popup = 'popup_login';
         browserAction.setBadgeText(tab?.id, currentTab?.loginList.length);
+    }
+
+    // No pending HTTP auth challenge -> restore the vault popup
+    if (!currentTab?.basicAuthLogins?.resolve) {
+        browserActionWrapper.setPopup({
+            tabId: tab.id,
+            popup: 'popups/popup.html'
+        });
     }
 
     await browserAction.show(tab, popupData);

@@ -156,8 +156,5 @@ kpxcPasswordGenerator.fill = function(elem, password) {
 };
 
 const isPasswordGeneratorSupported = async function() {
-    const response = await browser.runtime.sendMessage({
-        action: 'get_features_list'
-    });
-    return response?.passwordGenerator;
+    return true;
 };
