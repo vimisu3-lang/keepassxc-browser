@@ -31,6 +31,40 @@ describe('vault-manager', () => {
         expect(vm.isUnlocked).toBe(false);
     });
 
+    it('URL matching works in both directions with subdomains', () => {
+        const vm = new VaultManager();
+        vm.plaintextEntries.set('1', { uuid: '1', name: 'A', login: 'a', url: 'https://a.com' });
+
+        // Same host
+        expect(vm.urlMatches('https://a.com', 'https://a.com/dashboard')).toBe(true);
+        // Entry on base domain, page on subdomain
+        expect(vm.urlMatches('https://a.com', 'https://login.a.com')).toBe(true);
+        expect(vm.urlMatches('https://a.com', 'https://web.a.com')).toBe(true);
+        expect(vm.urlMatches('https://a.com', 'https://www.a.com')).toBe(true);
+        // Entry on subdomain, page on base domain (reverse direction)
+        expect(vm.urlMatches('https://login.a.com', 'https://a.com')).toBe(true);
+        expect(vm.urlMatches('https://web.a.com', 'https://a.com')).toBe(true);
+        expect(vm.urlMatches('https://www.a.com', 'https://a.com')).toBe(true);
+        // Bare hostname entry without scheme
+        expect(vm.urlMatches('a.com', 'https://login.a.com')).toBe(true);
+        // Subdomain to subdomain (same base domain)
+        expect(vm.urlMatches('https://login.a.com', 'https://web.a.com')).toBe(true);
+        expect(vm.urlMatches('https://b.a.com', 'https://c.a.com')).toBe(true);
+        // Multi-label 2nd-level domains
+        expect(vm.urlMatches('https://a.co.uk', 'https://b.a.co.uk')).toBe(true);
+        expect(vm.urlMatches('https://a.com.au', 'https://www.a.com.au')).toBe(true);
+
+        // Negative cases
+        expect(vm.urlMatches('https://a.com', 'https://a.evil.com')).toBe(false);
+        expect(vm.urlMatches('https://a.com', 'https://b.com')).toBe(false);
+        expect(vm.urlMatches('https://b.a.com', 'https://a.b.com')).toBe(false);
+        expect(vm.urlMatches('https://a.com', 'https://a.com.au')).toBe(false);
+        expect(vm.urlMatches('https://a.com.au', 'https://a.com')).toBe(false);
+        expect(vm.urlMatches('not a url', 'https://a.com')).toBe(false);
+        expect(vm.urlMatches('', 'https://a.com')).toBe(false);
+        expect(vm.urlMatches('https://a.com', '')).toBe(false);
+    });
+
     it('stores and retrieves an entry, with password encrypted at rest', async () => {
         const vm = new VaultManager();
         await vm.createVault('pw');

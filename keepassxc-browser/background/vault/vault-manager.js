@@ -13,6 +13,20 @@
  *     createdAt, updatedAt }
  */
 
+// Registrable base domain heuristic. Common 2nd-level markers (co.uk, com.au, ...)
+// are kept so the resulting base still has 3 labels; everything else uses the
+// last 2 labels. Good enough for host matching without a full Public Suffix List.
+const SECOND_LEVEL_MARKERS = new Set([
+    'ac', 'asn', 'co', 'com', 'edu', 'gen', 'gov', 'gv', 'id', 'mil', 'net', 'org'
+]);
+
+const getBaseDomain = function(hostname) {
+    const labels = hostname.split('.');
+    if (labels.length <= 2) return hostname;
+    const secondLast = labels[labels.length - 2];
+    return SECOND_LEVEL_MARKERS.has(secondLast) ? labels.slice(-3).join('.') : labels.slice(-2).join('.');
+};
+
 class VaultManager {
     constructor() {
         this.crypto = new CryptoManager();
@@ -383,16 +397,30 @@ class VaultManager {
         return this.plaintextEntries.get(uuid);
     }
 
-    // Hostname match: entry host === page host OR page host is a subdomain of entry host
+    // Hostname match based on the registrable base domain, so any host under the
+    // same root domain matches each other: a.com <-> login.a.com <-> web.a.com
+    // <-> www.a.com (all directions). `www.` is stripped before comparing.
     urlMatches(entryUrl, pageUrl) {
-        if (!entryUrl) return false;
+        if (!entryUrl || !pageUrl) return false;
+
+        const normalize = (raw) => {
+            let url = String(raw).trim();
+            if (!url.includes('://')) url = 'https://' + url;
+            const host = new URL(url).hostname.toLowerCase();
+            return host.startsWith('www.') ? host.slice(4) : host;
+        };
+
+        let entryHost;
+        let pageHost;
         try {
-            const entryHost = new URL(entryUrl).hostname.toLowerCase();
-            const pageHost = new URL(pageUrl).hostname.toLowerCase();
-            return entryHost === pageHost || pageHost.endsWith('.' + entryHost);
-        } catch (e) {
-            return entryUrl.includes(pageUrl);
+            entryHost = normalize(entryUrl);
+            pageHost = normalize(pageUrl);
+        } catch {
+            return false;
         }
+        if (!entryHost || !pageHost) return false;
+
+        return getBaseDomain(entryHost) === getBaseDomain(pageHost);
     }
 
     getEntriesForUrl(url) {
