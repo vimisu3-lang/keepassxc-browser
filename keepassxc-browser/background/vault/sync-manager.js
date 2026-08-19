@@ -111,6 +111,7 @@ class SyncManager {
 
     async syncNow() {
         const state = await this.getStatus();
+        console.log('[pwsave-sync] syncNow, connected:', state.connected, '| syncing:', this.syncing);
         if (!state.connected) return state;
         if (this.syncing) {
             this.syncQueued = true;
@@ -145,8 +146,14 @@ class SyncManager {
     }
 
     async performSync(token, state) {
+        console.log('[pwsave-sync] performSync start, state:', JSON.stringify({
+            lastSyncedAt: state.lastSyncedAt,
+            lastLocalSaveAt: state.lastLocalSaveAt,
+            lastKnownModifiedTime: state.lastKnownModifiedTime
+        }));
         const remote = await this.findRemoteFile(token);
         const localVault = await loadVaultFromStorage();
+        console.log('[pwsave-sync] remote found:', !!remote, '| local entries:', localVault ? localVault.entries.length : 'null');
 
         if (!remote) {
             if (localVault) {
@@ -245,11 +252,13 @@ class SyncManager {
     }
 
     async downloadAndApply(token, fileId) {
+        console.log('[pwsave-sync] downloadAndApply called');
         const content = await this.fetchWithAuth(
             token,
             `${DRIVE_API}/files/${fileId}?alt=media`
         );
         const parsed = this.parseVault(content);
+        console.log('[pwsave-sync] downloaded entries:', parsed.entries.length);
         await saveVaultToStorage(parsed);
         if (this.vaultManager.isUnlocked) {
             await this.vaultManager.reloadFromStorage();

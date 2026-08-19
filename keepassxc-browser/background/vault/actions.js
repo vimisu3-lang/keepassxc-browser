@@ -81,6 +81,12 @@ const createVaultActions = function(deps) {
             return { success: true };
         },
 
+        'pwsave_clear_entries': async function() {
+            if (!vaultManager.isUnlocked) return { success: false, error: 'VAULT_LOCKED' };
+            await vaultManager.clearAllEntries();
+            return { success: true };
+        },
+
         'pwsave_get_totp_codes': async function() {
             if (!vaultManager.isUnlocked) return { success: false, error: 'VAULT_LOCKED' };
             const entries = vaultManager.getAllEntries().filter(e => e.totp);
@@ -106,6 +112,85 @@ const createVaultActions = function(deps) {
             if (!vaultManager.isUnlocked) return { success: false, error: 'VAULT_LOCKED' };
             await vaultManager.updateEntry(uuid, { totp: otpauthUri || '' });
             return { success: true };
+        },
+
+        // Fill a specific entry on the given tab (does NOT require URL match).
+        // tabId: target tab; if not provided, the current active tab is used.
+        'pwsave_fill_entry': async function(_tab, args = []) {
+            const [ uuid, tabId ] = args;
+            if (!vaultManager.isUnlocked) return { success: false, error: 'VAULT_LOCKED' };
+            const entry = vaultManager.getEntryByUuid(uuid);
+            if (!entry) return { success: false, error: 'Entry not found' };
+
+            const targetTabId = tabId || tabs.currentTabId;
+            if (!targetTabId || targetTabId < 1) {
+                return { success: false, error: 'No active tab' };
+            }
+
+            try {
+                await browser.tabs.sendMessage(targetTabId, {
+                    action: 'fill_specific_credentials',
+                    uuid: entry.uuid,
+                    login: entry.login || '',
+                    password: entry.password || '',
+                    name: entry.name || '',
+                    url: entry.url || '',
+                    group: entry.group || '',
+                    stringFields: entry.stringFields || [],
+                    totp: entry.totp || ''
+                });
+                return { success: true };
+            } catch (e) {
+                return { success: false, error: 'No content script on this page' };
+            }
+        },
+
+        // Open the entry's URL in a new tab, then fill credentials once the page loads.
+        'pwsave_go_fill': async function(_tab, args = []) {
+            const [ uuid ] = args;
+            if (!vaultManager.isUnlocked) return { success: false, error: 'VAULT_LOCKED' };
+            const entry = vaultManager.getEntryByUuid(uuid);
+            if (!entry) return { success: false, error: 'Entry not found' };
+            if (!entry.url) return { success: false, error: 'No URL saved for this entry' };
+
+            let tab;
+            try {
+                tab = await browser.tabs.create({ url: entry.url, active: true });
+            } catch (e) {
+                return { success: false, error: 'Could not open URL' };
+            }
+
+            // Wait for the page to load, then try to fill (content script may need time).
+            const attemptFill = async function(tabId) {
+                for (let i = 0; i < 15; i++) {
+                    await new Promise(resolve => setTimeout(resolve, 800));
+                    try {
+                        await browser.tabs.sendMessage(tabId, {
+                            action: 'fill_specific_credentials',
+                            uuid: entry.uuid,
+                            login: entry.login || '',
+                            password: entry.password || '',
+                            name: entry.name || '',
+                            url: entry.url || '',
+                            group: entry.group || '',
+                            stringFields: entry.stringFields || [],
+                            totp: entry.totp || ''
+                        });
+                        return true;
+                    } catch (e) {
+                        // Page may still be loading or content script not ready yet
+                    }
+                }
+                return false;
+            };
+
+            void attemptFill(tab.id).then((ok) => {
+                if (!ok) {
+                    logError('pwsave_go_fill: could not fill after page load');
+                }
+            });
+
+            return { success: true, tabId: tab.id };
         },
 
         'pwsave_generate_password': async function(_tab, args = []) {

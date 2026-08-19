@@ -46,7 +46,27 @@ class VaultManager {
         await this.saveSession();
     }
 
+    // Assign uuids to legacy entries directly in the stored (encrypted) vault.
+    // Must run BEFORE any sync/merge/decrypt so entries without a uuid never
+    // get duplicated by the entry-level merge (uuid is the merge key).
+    async repairVaultUuids() {
+        const stored = await loadVaultFromStorage();
+        if (!stored || !Array.isArray(stored.entries)) return false;
+        let changed = false;
+        for (const entry of stored.entries) {
+            if (!entry || typeof entry.uuid !== 'string' || entry.uuid === '') {
+                entry.uuid = generateId();
+                changed = true;
+            }
+        }
+        if (changed) {
+            await saveVaultToStorage(stored);
+        }
+        return changed;
+    }
+
     async unlockVault(masterPassword) {
+        await this.repairVaultUuids();
         const stored = await loadVaultFromStorage();
         if (!stored) return false;
 
@@ -61,6 +81,10 @@ class VaultManager {
     }
 
     async lockVault() {
+        if (this.usageSaveTimer) {
+            clearTimeout(this.usageSaveTimer);
+            this.usageSaveTimer = null;
+        }
         this.crypto.lock();
         this.vault = null;
         this.plaintextEntries.clear();
@@ -74,7 +98,8 @@ class VaultManager {
         for (const entry of this.vault.entries) {
             try {
                 const decrypted = await this.decryptEntry(entry);
-                this.plaintextEntries.set(entry.uuid, decrypted);
+                // uuid should always be present (repairVaultUuids runs on every load).
+                this.plaintextEntries.set(decrypted.uuid, decrypted);
             } catch (e) {
                 // Keep the entry without decrypting on failure (shouldn't happen normally)
                 this.plaintextEntries.set(entry.uuid, this.toPlaintextEntry(entry));
@@ -118,7 +143,9 @@ class VaultManager {
             stringFields: [],
             totp: '',
             createdAt: stored.createdAt || Date.now(),
-            updatedAt: stored.updatedAt || Date.now()
+            updatedAt: stored.updatedAt || Date.now(),
+            usageCount: stored.usageCount || 0,
+            lastUsedAt: stored.lastUsedAt || 0
         };
     }
 
@@ -131,7 +158,9 @@ class VaultManager {
             group: plain.group || '',
             note: plain.note || '',
             createdAt: plain.createdAt,
-            updatedAt: plain.updatedAt
+            updatedAt: plain.updatedAt,
+            usageCount: plain.usageCount || 0,
+            lastUsedAt: plain.lastUsedAt || 0
         };
         if (plain.password) {
             const enc = await this.crypto.encryptText(plain.password);
@@ -194,6 +223,7 @@ class VaultManager {
     }
 
     async restoreSession(session) {
+        await this.repairVaultUuids();
         const stored = await loadVaultFromStorage();
         if (!stored || !session.masterKey || !session.masterKeyHash) return false;
 
@@ -215,6 +245,7 @@ class VaultManager {
     }
 
     async reloadFromStorage() {
+        await this.repairVaultUuids();
         const stored = await loadVaultFromStorage();
         if (!stored) return false;
         this.vault = stored;
@@ -249,12 +280,17 @@ class VaultManager {
             stringFields: cred.stringFields || [],
             totp: cred.totp || '',
             createdAt: now,
-            updatedAt: now
+            updatedAt: now,
+            usageCount: 0,
+            lastUsedAt: 0
         };
     }
 
     async addEntry(entry) {
         if (!this.vault) throw new Error('Vault not initialized');
+        console.log('[pwsave] addEntry:', JSON.stringify({
+            uuid: entry.uuid, name: entry.name, login: entry.login, url: entry.url
+        }));
         const existing = this.getAllEntries().find(
             e => e.name.toLowerCase() === (entry.name || '').toLowerCase()
         );
@@ -280,13 +316,63 @@ class VaultManager {
         await this.saveEncryptedVault();
     }
 
+    // Lightweight usage bump (popup Popular/Recent sorts). Does NOT touch updatedAt
+    // (that tracks content edits) and batches disk writes (max 1 per 5s).
+    async bumpUsage(uuid) {
+        const entry = this.plaintextEntries.get(uuid);
+        if (!entry) return;
+        const now = Date.now();
+        entry.usageCount = (entry.usageCount || 0) + 1;
+        entry.lastUsedAt = now;
+        if (!this.usageSaveTimer) {
+            this.usageSaveTimer = setTimeout(() => {
+                this.usageSaveTimer = null;
+                this.saveEncryptedVault().catch(() => { /* best effort */ });
+            }, 5000);
+        }
+    }
+
     async deleteEntry(uuid) {
+        console.log('[pwsave] deleteEntry called with uuid:', JSON.stringify(uuid));
+        console.log('[pwsave] plaintextEntries has uuid:', this.plaintextEntries.has(uuid),
+            '| total entries:', this.plaintextEntries.size);
+
+        // Legacy entries stored without a uuid end up as key `undefined` in the Map.
+        if (!uuid && this.plaintextEntries.has(undefined)) {
+            this.plaintextEntries.delete(undefined);
+            if (this.vault) {
+                this.vault.entries = this.vault.entries.filter(e => !e.uuid);
+                this.vault.deletedIds = { ...(this.vault.deletedIds || {}) };
+            }
+            await this.saveEncryptedVault();
+            console.log('[pwsave] deleted legacy entry without uuid');
+            return;
+        }
+
         this.plaintextEntries.delete(uuid);
         if (this.vault) {
             this.vault.entries = this.vault.entries.filter(e => e.uuid !== uuid);
             this.vault.deletedIds = { ...(this.vault.deletedIds || {}), [uuid]: Date.now() };
         }
         await this.saveEncryptedVault();
+        console.log('[pwsave] after delete, entries left:', this.plaintextEntries.size,
+            '| vault entries:', this.vault ? this.vault.entries.length : 'null');
+    }
+
+    async clearAllEntries() {
+        const now = Date.now();
+        const deletedIds = {};
+        for (const entry of this.plaintextEntries.values()) {
+            deletedIds[entry.uuid] = now;
+        }
+        this.plaintextEntries.clear();
+        if (this.vault) {
+            this.vault.entries = [];
+            // Keep tombstones so Drive sync drops the deleted entries instead of resurrecting them.
+            this.vault.deletedIds = { ...(this.vault.deletedIds || {}), ...deletedIds };
+        }
+        await this.saveEncryptedVault();
+        console.log('[pwsave] cleared all entries, tombstones:', Object.keys(this.vault ? this.vault.deletedIds : {}).length);
     }
 
     getAllEntries() {

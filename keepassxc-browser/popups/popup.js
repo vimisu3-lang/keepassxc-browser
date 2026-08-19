@@ -10,6 +10,10 @@ const send = async function(action, args = []) {
 
 let currentEntries = [];
 let currentSettings = null;
+let currentSort = 'popular';
+let searchQuery = '';
+let editingUuid = null;
+let toastTimer = null;
 
 //--------------------------------------------------------------------------
 // Screens
@@ -20,6 +24,7 @@ const showScreen = function(name) {
         document.getElementById(id).classList.add('d-none');
     });
     document.getElementById(name).classList.remove('d-none');
+    document.getElementById('fab-container').classList.toggle('d-none', name !== 'vault-view');
 };
 
 const initStatus = async function() {
@@ -44,20 +49,23 @@ const initStatus = async function() {
 
 const initVaultView = async function() {
     showScreen('vault-view');
-    currentSettings = (await send('pwsave_get_settings')).data;
+    currentSettings = (await send('pwsave_get_settings')).data || {};
     const entriesResponse = await send('pwsave_get_entries');
     currentEntries = entriesResponse.success ? entriesResponse.data : [];
 
+    updateAccountBadge();
+    renderEntries();
+};
+
+const updateAccountBadge = async function() {
     const syncStatus = await send('pwsave_sync_get_status');
     const s = syncStatus.data || {};
-    const syncText = s.connected
-        ? `Synced${s.account ? ' as ' + s.account : ''}${s.error ? ' (' + s.error + ')' : ''}`
-        : 'Not connected';
-    $('#sync-status-text').textContent = syncText;
+    const account = s.account || '';
 
-    $('#search-input').value = '';
-    renderEntries(currentEntries);
-    renderTotpCodes();
+    // Avatar: first 2 letters of the account email (uppercase)
+    const name = account.split('@')[0] || 'VI';
+    $('#account-avatar').textContent = name.slice(0, 2).toUpperCase();
+    $('#account-name').textContent = account ? name : 'vault';
 };
 
 const faviconUrl = function(url) {
@@ -72,9 +80,52 @@ const faviconUrl = function(url) {
     }
 };
 
-const renderEntries = function(entries) {
+// Entry display: "Folder/ Name (login)"
+const entryDisplayParts = function(entry) {
+    const name = entry.name || '(unnamed)';
+    const group = entry.group || '';
+    const displayName = group ? name : name;
+    const login = entry.login || '';
+    return { group, name: displayName, login };
+};
+
+const sortEntries = function(entries, sort) {
+    const arr = entries.slice();
+    switch (sort) {
+        case 'recent':
+            arr.sort((a, b) => (b.lastUsedAt || b.updatedAt || 0) - (a.lastUsedAt || a.updatedAt || 0));
+            break;
+        case 'az':
+            arr.sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' }));
+            break;
+        case 'popular':
+        default:
+            // Popular: by usage count, fallback to most recently used
+            arr.sort((a, b) => {
+                const diff = (b.usageCount || 0) - (a.usageCount || 0);
+                if (diff !== 0) return diff;
+                return (b.lastUsedAt || b.updatedAt || 0) - (a.lastUsedAt || a.updatedAt || 0);
+            });
+            break;
+    }
+    return arr;
+};
+
+const renderEntries = function() {
     const list = $('#entry-list');
     list.innerHTML = '';
+
+    let entries = sortEntries(currentEntries, currentSort);
+
+    if (searchQuery) {
+        const q = searchQuery.toLowerCase();
+        entries = entries.filter(entry =>
+            (entry.name || '').toLowerCase().includes(q) ||
+            (entry.login || '').toLowerCase().includes(q) ||
+            (entry.url || '').toLowerCase().includes(q) ||
+            (entry.group || '').toLowerCase().includes(q)
+        );
+    }
 
     if (entries.length === 0) {
         $('#empty-state').classList.remove('d-none');
@@ -83,9 +134,9 @@ const renderEntries = function(entries) {
     $('#empty-state').classList.add('d-none');
 
     for (const entry of entries) {
-        const item = document.createElement('a');
-        item.setAttribute('href', '#');
-        item.className = 'list-group-item list-group-item-action pwsave-entry d-flex align-items-center gap-2';
+        const item = document.createElement('div');
+        item.className = 'rf-entry';
+        item.setAttribute('role', 'button');
         item.addEventListener('click', (e) => {
             if (e.isTrusted) {
                 e.preventDefault();
@@ -93,57 +144,187 @@ const renderEntries = function(entries) {
             }
         });
 
-        const img = document.createElement('img');
-        img.src = faviconUrl(entry.url);
-        img.width = 16;
-        img.height = 16;
-        img.className = 'rounded';
-        img.addEventListener('error', () => { img.src = '../icons/keepassxc.svg'; });
+        // Icon: favicon if URL, else first letter, else lock
+        const icon = document.createElement('div');
+        icon.className = 'rf-entry-icon';
+        if (entry.url) {
+            const img = document.createElement('img');
+            img.src = faviconUrl(entry.url);
+            img.alt = '';
+            img.addEventListener('error', () => { img.remove(); icon.textContent = (entry.name || '?')[0].toUpperCase(); });
+            icon.append(img);
+        } else {
+            icon.textContent = (entry.name || '?')[0].toUpperCase();
+        }
 
-        const text = document.createElement('div');
-        text.className = 'flex-grow-1 overflow-hidden';
-        const name = document.createElement('div');
-        name.className = 'text-truncate';
+        // Body: folder / name + login
+        const body = document.createElement('div');
+        body.className = 'rf-entry-body';
+
+        const title = document.createElement('div');
+        title.className = 'rf-entry-title';
+        if (entry.group) {
+            const folder = document.createElement('span');
+            folder.className = 'rf-entry-folder';
+            folder.textContent = entry.group + '/ ';
+            title.append(folder);
+        }
+        const name = document.createElement('span');
+        name.className = 'rf-entry-name';
         name.textContent = entry.name || '(unnamed)';
-        const login = document.createElement('div');
-        login.className = 'text-truncate small text-muted';
-        login.textContent = entry.login || '';
-        text.append(name, login);
+        title.append(name);
 
+        body.append(title);
+
+        if (entry.login) {
+            const sub = document.createElement('div');
+            sub.className = 'rf-entry-sub';
+            sub.textContent = entry.login;
+            body.append(sub);
+        }
+
+        // Actions on hover
         const actions = document.createElement('div');
-        actions.className = 'd-flex gap-1';
-        actions.addEventListener('click', (e) => e.stopPropagation());
+        actions.className = 'rf-entry-actions';
+
+        if (entry.login) {
+            const copyUser = document.createElement('button');
+            copyUser.className = 'rf-entry-action';
+            copyUser.title = 'Copy username';
+            copyUser.innerHTML = '<i class="fa fa-user" aria-hidden="true"></i>';
+            copyUser.addEventListener('click', (e) => {
+                if (e.isTrusted) {
+                    e.stopPropagation();
+                    copyText(entry.login);
+                    showToast('Username copied');
+                }
+            });
+            actions.append(copyUser);
+        }
 
         if (entry.password) {
-            const copyBtn = document.createElement('button');
-            copyBtn.className = 'btn btn-sm btn-outline-secondary pwsave-icon-btn';
-            copyBtn.title = 'Copy password';
-            copyBtn.innerHTML = '<i class="fa fa-copy" aria-hidden="true"></i>';
-            copyBtn.addEventListener('click', (e) => {
+            const copyPass = document.createElement('button');
+            copyPass.className = 'rf-entry-action';
+            copyPass.title = 'Copy password';
+            copyPass.innerHTML = '<i class="fa fa-copy" aria-hidden="true"></i>';
+            copyPass.addEventListener('click', (e) => {
                 if (e.isTrusted) {
+                    e.stopPropagation();
                     copyPassword(entry);
                 }
             });
-            actions.append(copyBtn);
+            actions.append(copyPass);
         }
 
-        if (entry.login) {
-            const userBtn = document.createElement('button');
-            userBtn.className = 'btn btn-sm btn-outline-secondary pwsave-icon-btn';
-            userBtn.title = 'Copy username';
-            userBtn.innerHTML = '<i class="fa fa-user" aria-hidden="true"></i>';
-            userBtn.addEventListener('click', (e) => {
-                if (e.isTrusted) {
-                    copyUsername(entry);
-                }
-            });
-            actions.append(userBtn);
-        }
+        // Kebab menu (⋮): copy, fill, edit, delete
+        const kebab = document.createElement('button');
+        kebab.className = 'rf-entry-action';
+        kebab.title = 'More options';
+        kebab.innerHTML = '<i class="fa fa-ellipsis-v" aria-hidden="true"></i>';
+        kebab.addEventListener('click', (e) => {
+            if (e.isTrusted) {
+                e.stopPropagation();
+                showEntryMenu(entry, e.clientX, e.clientY);
+            }
+        });
+        actions.append(kebab);
 
-        item.append(img, text, actions);
+        item.append(icon, body, actions);
         list.append(item);
     }
 };
+
+//--------------------------------------------------------------------------
+// Entry kebab menu
+//--------------------------------------------------------------------------
+
+const showEntryMenu = function(entry, x, y) {
+    const menu = $('#entry-menu');
+    menu.innerHTML = '';
+    menu.classList.remove('d-none');
+
+    const addItem = function(label, icon, fn, danger = false) {
+        const btn = document.createElement('button');
+        btn.className = 'rf-entry-menu-item' + (danger ? ' danger' : '');
+        btn.innerHTML = `<i class="fa ${icon}" aria-hidden="true"></i> ${label}`;
+        btn.addEventListener('click', (e) => {
+            if (e.isTrusted) {
+                hideEntryMenu();
+                fn();
+            }
+        });
+        menu.append(btn);
+    };
+
+    const addSep = function() {
+        const sep = document.createElement('div');
+        sep.className = 'rf-entry-menu-sep';
+        menu.append(sep);
+    };
+
+    addItem('Copy password', 'fa-copy', () => copyPassword(entry));
+    if (entry.login) {
+        addItem('Copy username', 'fa-user', async () => {
+            await copyText(entry.login);
+            showToast('Username copied');
+        });
+    }
+    addSep();
+    addItem('Go fill', 'fa-globe', () => goFill(entry));
+    addItem('Fill form', 'fa-pencil', () => fillEntryOnTab(entry));
+    addSep();
+    addItem('Edit', 'fa-pencil-square-o', () => openEntryModal(entry));
+    addItem('Delete', 'fa-trash', async () => {
+        await send('pwsave_delete_entry', [ entry.uuid ]);
+        showToast('Deleted');
+        await initVaultView();
+    }, true);
+
+    // Position the menu near the click, clamp to viewport
+    const menuRect = menu.getBoundingClientRect();
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    let left = x;
+    let top = y;
+    if (left + menuRect.width > vw - 4) left = vw - menuRect.width - 4;
+    if (top + menuRect.height > vh - 4) top = vh - menuRect.height - 4;
+    menu.style.left = left + 'px';
+    menu.style.top = top + 'px';
+};
+
+const hideEntryMenu = function() {
+    $('#entry-menu').classList.add('d-none');
+};
+
+// Open the entry's saved URL in a new tab and fill the credentials there
+const goFill = async function(entry) {
+    const response = await send('pwsave_go_fill', [ entry.uuid ]);
+    if (!response || !response.success) {
+        showToast(response?.error || 'Could not open URL');
+        return;
+    }
+    window.close();
+};
+
+// Fill the entry into the current active tab (URL match NOT required)
+const fillEntryOnTab = async function(entry) {
+    const tab = await getCurrentTab();
+    if (!tab || tab.id === undefined) {
+        showToast('No active tab');
+        return;
+    }
+    const res = await send('pwsave_fill_entry', [ entry.uuid, tab.id ]);
+    if (res && res.success) {
+        showToast('Filled');
+        window.close();
+    } else {
+        showToast('No login form on this page');
+    }
+};
+
+//--------------------------------------------------------------------------
+// Copy helpers
+//--------------------------------------------------------------------------
 
 const copyText = async function(text) {
     const delay = (currentSettings && currentSettings.clipboardClearDelay) || 0;
@@ -172,18 +353,12 @@ const copyPassword = async function(entry) {
     showToast('Password copied');
 };
 
-const copyUsername = async function(entry) {
-    await copyText(entry.login || '');
-    showToast('Username copied');
-};
-
-let toastTimer = null;
 const showToast = function(message) {
     let toast = $('#toast');
     if (!toast) {
         toast = document.createElement('div');
         toast.id = 'toast';
-        toast.className = 'pwsave-toast';
+        toast.className = 'rf-toast';
         document.body.appendChild(toast);
     }
     toast.textContent = message;
@@ -193,57 +368,27 @@ const showToast = function(message) {
 };
 
 //--------------------------------------------------------------------------
-// TOTP codes
+// Fill action
 //--------------------------------------------------------------------------
 
-let totpTimer = null;
-
-const renderTotpCodes = async function() {
-    const response = await send('pwsave_get_totp_codes');
-    const codes = response.success ? response.data : [];
-    const section = $('#totp-section');
-    const list = $('#totp-list');
-
-    if (codes.length === 0) {
-        section.classList.add('d-none');
-        if (totpTimer) {
-            clearInterval(totpTimer);
-            totpTimer = null;
-        }
+const fillLogins = async function() {
+    const tab = await getCurrentTab();
+    if (!tab || tab.id === undefined) {
+        showToast('No active tab');
         return;
     }
-
-    section.classList.remove('d-none');
-    list.innerHTML = '';
-    for (const code of codes) {
-        const item = document.createElement('div');
-        item.className = 'list-group-item d-flex align-items-center gap-2 py-1';
-        const label = document.createElement('span');
-        label.className = 'small flex-grow-1 text-truncate';
-        label.textContent = `${code.name || 'TOTP'}${code.login ? ' (' + code.login + ')' : ''}`;
-        const value = document.createElement('code');
-        value.className = 'pwsave-totp-code';
-        value.textContent = code.code;
-        item.append(label, value);
-        item.addEventListener('click', (e) => {
-            if (e.isTrusted) {
-                copyText(code.code);
-                showToast('Code copied');
-            }
-        });
-        list.append(item);
-    }
-
-    if (!totpTimer) {
-        totpTimer = setInterval(renderTotpCodes, 1000);
+    try {
+        await browser.tabs.sendMessage(tab.id, { action: 'fill_username_password' });
+        showToast('Logins filled');
+        window.close();
+    } catch (e) {
+        showToast('No login form on this page');
     }
 };
 
 //--------------------------------------------------------------------------
 // Entry modal (add / edit)
 //--------------------------------------------------------------------------
-
-let editingUuid = null;
 
 const openEntryModal = function(entry) {
     editingUuid = entry ? entry.uuid : null;
@@ -252,6 +397,7 @@ const openEntryModal = function(entry) {
     $('#edit-login').value = entry ? (entry.login || '') : '';
     $('#edit-password').value = entry ? (entry.password || '') : '';
     $('#edit-url').value = entry ? (entry.url || '') : '';
+    $('#edit-group').value = entry ? (entry.group || '') : '';
     $('#edit-note').value = entry ? (entry.note || '') : '';
     $('#edit-totp-secret').value = '';
     $('#edit-totp-label').value = '';
@@ -264,6 +410,7 @@ const saveEntry = async function() {
     const login = $('#edit-login').value.trim();
     const password = $('#edit-password').value;
     const url = $('#edit-url').value.trim();
+    const group = $('#edit-group').value.trim();
     const note = $('#edit-note').value;
     const totpSecret = $('#edit-totp-secret').value.trim().replace(/\s/g, '');
     const totpLabel = $('#edit-totp-label').value.trim();
@@ -275,7 +422,7 @@ const saveEntry = async function() {
     }
 
     if (editingUuid) {
-        await send('pwsave_update_entry', [ editingUuid, { name, login, password, url, note, totp: totpUri } ]);
+        await send('pwsave_update_entry', [ editingUuid, { name, login, password, url, group, note, totp: totpUri } ]);
     } else {
         const entry = {
             uuid: crypto.randomUUID(),
@@ -283,8 +430,8 @@ const saveEntry = async function() {
             login,
             password,
             url,
+            group,
             note,
-            group: '',
             stringFields: [],
             totp: totpUri,
             createdAt: Date.now(),
@@ -321,7 +468,110 @@ const generateAndShow = async function() {
 //--------------------------------------------------------------------------
 
 const initEvents = function() {
-    $('#options-button').addEventListener('click', () => browser.runtime.openOptionsPage());
+    $('#home-button').addEventListener('click', () => {
+        // Back to the main view (same as vault view, just clears search)
+        searchQuery = '';
+        $('#search-input').value = '';
+        renderEntries();
+    });
+
+    $('#search-input').addEventListener('input', (e) => {
+        searchQuery = e.target.value;
+        renderEntries();
+    });
+
+    $('#copy-action-button').addEventListener('click', async () => {
+        // Copy first visible entry's login (quick access)
+        const entries = sortEntries(currentEntries, currentSort);
+        const filtered = searchQuery
+            ? entries.filter(entry =>
+                (entry.name || '').toLowerCase().includes(searchQuery) ||
+                (entry.login || '').toLowerCase().includes(searchQuery) ||
+                (entry.group || '').toLowerCase().includes(searchQuery)
+            )
+            : entries;
+        const first = filtered[0];
+        if (first && first.login) {
+            await copyText(first.login);
+            showToast('Username copied');
+        } else if (first) {
+            await copyText(first.name);
+            showToast('Name copied');
+        } else {
+            showToast('No entries');
+        }
+    });
+
+    $('#type-selector').addEventListener('click', () => {
+        showToast('Only logins available');
+    });
+
+    $('#fill-button').addEventListener('click', fillLogins);
+
+    $('.rf-account').addEventListener('click', () => browser.runtime.openOptionsPage());
+
+    // Sort tabs
+    document.querySelectorAll('.rf-tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+            document.querySelectorAll('.rf-tab').forEach(t => t.classList.remove('active'));
+            tab.classList.add('active');
+            currentSort = tab.dataset.sort;
+            renderEntries();
+        });
+    });
+
+    $('#menu-button').addEventListener('click', (e) => {
+        e.stopPropagation();
+        $('#rf-menu').classList.toggle('d-none');
+    });
+
+    document.addEventListener('click', (e) => {
+        if (!e.target.closest('#rf-menu') && !e.target.closest('#menu-button')) {
+            $('#rf-menu').classList.add('d-none');
+        }
+        if (!e.target.closest('#entry-menu') && !e.target.closest('.rf-entry-action')) {
+            hideEntryMenu();
+        }
+    });
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            hideEntryMenu();
+            $('#rf-menu').classList.add('d-none');
+        }
+    });
+
+    $('#menu-options').addEventListener('click', () => browser.runtime.openOptionsPage());
+
+    $('#menu-sync').addEventListener('click', async () => {
+        $('#rf-menu').classList.add('d-none');
+        const response = await send('pwsave_sync_now');
+        showToast(response && response.success ? 'Synced' : 'Sync failed');
+    });
+
+    $('#menu-lock').addEventListener('click', async () => {
+        $('#rf-menu').classList.add('d-none');
+        await send('pwsave_lock');
+        await initStatus();
+    });
+
+    $('#menu-delete-all').addEventListener('click', async () => {
+        $('#rf-menu').classList.add('d-none');
+        const count = currentEntries.length;
+        if (count === 0) {
+            showToast('No entries to delete');
+            return;
+        }
+        if (window.confirm(`Delete ALL ${count} entries? This cannot be undone.`)) {
+            const response = await send('pwsave_clear_entries');
+            if (response && response.success) {
+                await initVaultView();
+                showToast('All entries deleted');
+            } else {
+                showToast(response?.error || 'Delete failed');
+            }
+        }
+    });
 
     $('#signin-button').addEventListener('click', async () => {
         const response = await send('pwsave_sync_setup');
@@ -355,19 +605,16 @@ const initEvents = function() {
         }
     });
 
-    $('#lock-button').addEventListener('click', async () => {
-        await send('pwsave_lock');
-        await initStatus();
-    });
-
-    $('#add-entry-button').addEventListener('click', () => openEntryModal(null));
+    $('#fab-add').addEventListener('click', () => openEntryModal(null));
+    $('#fab-save').addEventListener('click', () => openEntryModal(null));
 
     $('#save-entry-button').addEventListener('click', saveEntry);
 
     $('#delete-entry-button').addEventListener('click', async () => {
-        if (editingUuid && window.confirm('Delete this entry?')) {
+        if (editingUuid) {
             await send('pwsave_delete_entry', [ editingUuid ]);
             bootstrap.Modal.getInstance($('#entry-modal')).hide();
+            showToast('Deleted');
             await initVaultView();
         }
     });
@@ -381,10 +628,6 @@ const initEvents = function() {
         $('#edit-password').value = response.success ? response.data : '';
     });
 
-    $('#generator-button').addEventListener('click', () => {
-        generateAndShow();
-        bootstrap.Modal.getOrCreateInstance($('#generator-modal')).show();
-    });
     $('#gen-again').addEventListener('click', generateAndShow);
     $('#gen-copy').addEventListener('click', () => {
         copyText($('#gen-password').value);
@@ -393,23 +636,6 @@ const initEvents = function() {
     $('#gen-length').addEventListener('change', generateAndShow);
     $('#gen-symbols').addEventListener('change', generateAndShow);
     $('#gen-numbers').addEventListener('change', generateAndShow);
-
-    $('#search-input').addEventListener('input', (e) => {
-        const q = e.target.value.toLowerCase();
-        const filtered = currentEntries.filter(entry =>
-            (entry.name || '').toLowerCase().includes(q) ||
-            (entry.login || '').toLowerCase().includes(q) ||
-            (entry.url || '').toLowerCase().includes(q)
-        );
-        renderEntries(filtered);
-    });
-
-    $('#sync-now-button').addEventListener('click', async () => {
-        await send('pwsave_sync_now');
-        await initVaultView();
-    });
-
-    $('#totp-refresh-button').addEventListener('click', renderTotpCodes);
 };
 
 (async () => {

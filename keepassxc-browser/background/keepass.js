@@ -55,7 +55,20 @@ keepass.retrieveCredentials = async function(_tab, args = []) {
     if (!url) {
         return [];
     }
-    return vaultManager.getCredentialsForUrl(url, submitUrl);
+    const credentials = vaultManager.getCredentialsForUrl(url, submitUrl);
+
+    // Track usage for the popup's Popular/Recent sorts (batched write, no updatedAt change).
+    if (credentials.length > 0) {
+        for (const cred of credentials) {
+            try {
+                await vaultManager.bumpUsage(cred.uuid);
+            } catch (e) {
+                logError('retrieveCredentials usage tracking error: ' + e);
+            }
+        }
+    }
+
+    return credentials;
 };
 
 keepass.addCredentials = async function(_tab, args = []) {

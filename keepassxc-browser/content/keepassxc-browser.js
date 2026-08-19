@@ -922,6 +922,51 @@ browser.runtime.onMessage.addListener(async function(req, sender) {
         } else if (req.action === 'fill_user_pass_with_specific_login') {
             await kpxc.reconnect();
             kpxcFill.fillFromPopup(req.id, req.uuid);
+        } else if (req.action === 'fill_specific_credentials') {
+            // Fill a specific entry regardless of URL match (requested from the popup).
+            const cred = {
+                uuid: req.uuid,
+                login: req.login,
+                password: req.password,
+                name: req.name,
+                url: req.url,
+                group: req.group,
+                stringFields: req.stringFields || [],
+                totp: req.totp || ''
+            };
+            kpxc.credentials = [ cred ];
+            const activeElement = document.activeElement;
+            const activeIsField = activeElement && (activeElement.nodeName === 'INPUT' || activeElement.nodeName === 'TEXTAREA');
+            let combination = null;
+
+            if (kpxc.combinations.length > 0) {
+                // Prefer the combination containing the focused field, else the first complete one
+                if (activeIsField) {
+                    combination = kpxc.combinations.find(c =>
+                        c.username === activeElement || c.password === activeElement
+                    ) || kpxc.combinations[0];
+                } else {
+                    combination = kpxc.combinations.find(c => c.username && c.password) || kpxc.combinations[0];
+                }
+            }
+
+            if (combination) {
+                const focusTarget = activeIsField ? activeElement : (combination.username || combination.password);
+                if (focusTarget && typeof focusTarget.focus === 'function') {
+                    focusTarget.focus();
+                }
+                await sendMessage('page_set_login_id', cred.uuid);
+                await kpxcFill.fillInCredentials(combination, cred.login, cred.uuid);
+            } else {
+                // No combinations detected - try to create one from a focused field
+                if (activeIsField) {
+                    const comb = await kpxc.createCombination(activeElement, activeElement.type === 'password');
+                    await sendMessage('page_set_login_id', cred.uuid);
+                    await kpxcFill.fillInCredentials(comb, cred.login, cred.uuid);
+                } else {
+                    kpxcUI.createNotification('error', 'No login fields found on this page');
+                }
+            }
         } else if (req.action === 'fill_username_password') {
             await kpxc.reconnect();
             sendMessage('page_set_manual_fill', ManualFill.BOTH);
