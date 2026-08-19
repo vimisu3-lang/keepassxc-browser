@@ -111,9 +111,10 @@ const refreshVaultLockedState = async function() {
     const locked = !status.unlocked;
     $('#vault-locked-alert').style.display = locked ? 'block' : 'none';
     $('#security-locked-alert').style.display = locked ? 'block' : 'none';
+    $('#entries-locked-alert').style.display = locked ? 'block' : 'none';
     const disabled = locked;
     [ '#master-password-card', '#export-encrypted-button', '#export-csv-button',
-        '#import-file', '#security-report-button' ].forEach(sel => {
+        '#import-file', '#security-report-button', '#tab-entries' ].forEach(sel => {
         const el = $(sel);
         if (el) {
             el.style.opacity = disabled ? '0.5' : '1';
@@ -308,6 +309,330 @@ const initSecurityActions = function() {
 };
 
 //--------------------------------------------------------------------------
+// Entries
+//--------------------------------------------------------------------------
+
+const entriesState = {
+    data: [],
+    search: '',
+    groupFilter: '',
+    editingUuid: null,
+    sort: { key: null, dir: 1 },
+    selected: new Set()
+};
+
+const collectGroups = function() {
+    const groups = new Set();
+    for (const e of entriesState.data) {
+        if (e.group) groups.add(e.group);
+    }
+    return Array.from(groups).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+};
+
+const renderGroupFilter = function() {
+    const select = $('#entry-group-filter');
+    const groups = collectGroups();
+    const current = entriesState.groupFilter;
+    select.innerHTML = '<option value="">All groups</option>';
+    for (const g of groups) {
+        const opt = document.createElement('option');
+        opt.value = g;
+        opt.textContent = g;
+        if (g === current) opt.selected = true;
+        select.append(opt);
+    }
+};
+
+const renderGroupOptions = function() {
+    const datalist = $('#group-options');
+    datalist.innerHTML = '';
+    for (const g of collectGroups()) {
+        const opt = document.createElement('option');
+        opt.value = g;
+        datalist.append(opt);
+    }
+};
+
+const filteredEntries = function() {
+    const q = entriesState.search.trim().toLowerCase();
+    return entriesState.data.filter(e => {
+        if (entriesState.groupFilter && e.group !== entriesState.groupFilter) return false;
+        if (!q) return true;
+        return (e.name || '').toLowerCase().includes(q)
+            || (e.login || '').toLowerCase().includes(q)
+            || (e.url || '').toLowerCase().includes(q)
+            || (e.group || '').toLowerCase().includes(q);
+    });
+};
+
+const refreshEntries = async function() {
+    const status = await refreshVaultLockedState();
+    const response = await send('pwsave_get_entries');
+    entriesState.data = (response && response.success) ? response.data : [];
+    renderGroupFilter();
+    renderEntries();
+    return status;
+};
+
+const sortEntries = function(entries) {
+    const arr = entries.slice();
+    const { key, dir } = entriesState.sort;
+    if (!key) {
+        arr.sort((a, b) => {
+            const diff = (b.usageCount || 0) - (a.usageCount || 0);
+            if (diff !== 0) return diff;
+            return (b.lastUsedAt || b.updatedAt || 0) - (a.lastUsedAt || a.updatedAt || 0);
+        });
+        return arr;
+    }
+    arr.sort((a, b) => {
+        const av = (a[key] || '');
+        const bv = (b[key] || '');
+        return dir * av.localeCompare(bv, undefined, { sensitivity: 'base' });
+    });
+    return arr;
+};
+
+const renderEntries = function() {
+    const tbody = $('#entry-table-body');
+    tbody.innerHTML = '';
+    const list = sortEntries(filteredEntries());
+
+    const selectedCount = entriesState.selected.size;
+    const countEl = $('#entry-count');
+    countEl.textContent = selectedCount > 0
+        ? `${list.length} of ${entriesState.data.length} entries (${selectedCount} selected)`
+        : `${list.length} of ${entriesState.data.length} entries`;
+
+    $('#delete-selected-button').classList.toggle('d-none', selectedCount === 0);
+
+    const selectAll = $('#entry-select-all');
+    if (selectAll) {
+        const visibleUuids = list.map(e => e.uuid);
+        selectAll.checked = visibleUuids.length > 0 && visibleUuids.every(u => entriesState.selected.has(u));
+        selectAll.indeterminate = !selectAll.checked && visibleUuids.some(u => entriesState.selected.has(u));
+    }
+
+    updateSortIcons();
+
+    if (list.length === 0) {
+        const row = document.createElement('tr');
+        row.innerHTML = '<td colspan="6" class="text-center text-muted py-3">No entries found.</td>';
+        tbody.append(row);
+        return;
+    }
+
+    for (const entry of list) {
+        const tr = document.createElement('tr');
+        tr.classList.toggle('table-active', entriesState.selected.has(entry.uuid));
+
+        const checkTd = document.createElement('td');
+        checkTd.className = 'entry-check-col';
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.className = 'form-check-input entry-check';
+        checkbox.checked = entriesState.selected.has(entry.uuid);
+        checkbox.addEventListener('click', (e) => {
+            e.stopPropagation();
+            toggleSelected(entry.uuid, checkbox.checked);
+        });
+        checkTd.append(checkbox);
+
+        const nameTd = document.createElement('td');
+        nameTd.textContent = entry.name || '(unnamed)';
+
+        const loginTd = document.createElement('td');
+        loginTd.textContent = entry.login || '';
+
+        const urlTd = document.createElement('td');
+        urlTd.textContent = entry.url || '';
+
+        const groupTd = document.createElement('td');
+        groupTd.textContent = entry.group || '';
+
+        const actionsTd = document.createElement('td');
+        actionsTd.className = 'text-end text-nowrap';
+
+        const editBtn = document.createElement('button');
+        editBtn.className = 'btn btn-sm btn-outline-secondary me-1';
+        editBtn.title = 'Edit';
+        editBtn.innerHTML = '<i class="fa fa-pencil" aria-hidden="true"></i>';
+        editBtn.addEventListener('click', () => openEntryModal(entry));
+
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'btn btn-sm btn-outline-danger';
+        deleteBtn.title = 'Delete';
+        deleteBtn.innerHTML = '<i class="fa fa-trash" aria-hidden="true"></i>';
+        deleteBtn.addEventListener('click', () => deleteEntry(entry));
+
+        actionsTd.append(editBtn, deleteBtn);
+        tr.append(checkTd, nameTd, loginTd, urlTd, groupTd, actionsTd);
+        tbody.append(tr);
+    }
+};
+
+const toggleSelected = function(uuid, checked) {
+    if (checked) {
+        entriesState.selected.add(uuid);
+    } else {
+        entriesState.selected.delete(uuid);
+    }
+    renderEntries();
+};
+
+const deleteSelected = async function() {
+    const count = entriesState.selected.size;
+    if (count === 0) return;
+    if (!window.confirm(`Delete ${count} selected entrie(s)? This cannot be undone.`)) {
+        return;
+    }
+    for (const uuid of Array.from(entriesState.selected)) {
+        await send('pwsave_delete_entry', [ uuid ]);
+    }
+    entriesState.selected.clear();
+    await refreshEntries();
+};
+
+const updateSortIcons = function() {
+    document.querySelectorAll('.entry-sortable').forEach(th => {
+        const icon = th.querySelector('.entry-sort-icon');
+        if (!icon) return;
+        const key = th.dataset.sortKey;
+        if (entriesState.sort.key === key) {
+            icon.className = 'fa ' + (entriesState.sort.dir > 0 ? 'fa-sort-up' : 'fa-sort-down');
+        } else {
+            icon.className = 'fa fa-sort entry-sort-icon';
+        }
+    });
+};
+
+const deleteEntry = async function(entry) {
+    if (!window.confirm(`Delete entry "${entry.name || '(unnamed)'}"? This cannot be undone.`)) {
+        return;
+    }
+    await send('pwsave_delete_entry', [ entry.uuid ]);
+    await refreshEntries();
+};
+
+const openEntryModal = function(entry) {
+    entriesState.editingUuid = entry ? entry.uuid : null;
+    $('#entry-modal-title').textContent = entry ? 'Edit entry' : 'Add entry';
+    $('#edit-name').value = entry ? (entry.name || '') : '';
+    $('#edit-login').value = entry ? (entry.login || '') : '';
+    $('#edit-password').value = entry ? (entry.password || '') : '';
+    $('#edit-url').value = entry ? (entry.url || '') : '';
+    $('#edit-group').value = entry ? (entry.group || '') : '';
+    $('#edit-note').value = entry ? (entry.note || '') : '';
+    $('#edit-totp-secret').value = '';
+    $('#edit-totp-label').value = '';
+    $('#delete-entry-button').classList.toggle('d-none', !entry);
+    renderGroupOptions();
+    bootstrap.Modal.getOrCreateInstance($('#entry-modal')).show();
+};
+
+const saveEntry = async function() {
+    const name = $('#edit-name').value.trim();
+    const login = $('#edit-login').value.trim();
+    const password = $('#edit-password').value;
+    const url = $('#edit-url').value.trim();
+    const group = $('#edit-group').value.trim();
+    const note = $('#edit-note').value;
+    const totpSecret = $('#edit-totp-secret').value.trim().replace(/\s/g, '');
+    const totpLabel = $('#edit-totp-label').value.trim();
+
+    let totpUri = '';
+    if (totpSecret) {
+        const label = encodeURIComponent(totpLabel || name || login || 'TOTP');
+        totpUri = `otpauth://totp/${label}?secret=${encodeURIComponent(totpSecret).replace(/%20/g, '')}`;
+    }
+
+    if (entriesState.editingUuid) {
+        await send('pwsave_update_entry', [ entriesState.editingUuid, { name, login, password, url, group, note, totp: totpUri } ]);
+    } else {
+        const entry = {
+            uuid: crypto.randomUUID(),
+            name: name || 'New entry',
+            login,
+            password,
+            url,
+            group,
+            note,
+            stringFields: [],
+            totp: totpUri,
+            createdAt: Date.now(),
+            updatedAt: Date.now()
+        };
+        await send('pwsave_add_entry', [ entry ]);
+    }
+
+    bootstrap.Modal.getInstance($('#entry-modal')).hide();
+    await refreshEntries();
+};
+
+const deleteEntryFromModal = async function() {
+    if (entriesState.editingUuid) {
+        await send('pwsave_delete_entry', [ entriesState.editingUuid ]);
+        bootstrap.Modal.getInstance($('#entry-modal')).hide();
+        await refreshEntries();
+    }
+};
+
+const initEntriesActions = function() {
+    $('#add-entry-button').addEventListener('click', () => openEntryModal(null));
+
+    $('#delete-selected-button').addEventListener('click', deleteSelected);
+
+    $('#entry-search').addEventListener('input', (e) => {
+        entriesState.search = e.target.value;
+        renderEntries();
+    });
+
+    $('#entry-group-filter').addEventListener('change', (e) => {
+        entriesState.groupFilter = e.target.value;
+        renderEntries();
+    });
+
+    document.querySelectorAll('.entry-sortable').forEach(th => {
+        th.addEventListener('click', () => {
+            const key = th.dataset.sortKey;
+            if (entriesState.sort.key === key) {
+                entriesState.sort.dir *= -1;
+            } else {
+                entriesState.sort = { key, dir: 1 };
+            }
+            renderEntries();
+        });
+    });
+
+    $('#entry-select-all').addEventListener('change', (e) => {
+        const list = sortEntries(filteredEntries());
+        if (e.target.checked) {
+            for (const entry of list) {
+                entriesState.selected.add(entry.uuid);
+            }
+        } else {
+            for (const entry of list) {
+                entriesState.selected.delete(entry.uuid);
+            }
+        }
+        renderEntries();
+    });
+
+    $('#save-entry-button').addEventListener('click', saveEntry);
+
+    $('#delete-entry-button').addEventListener('click', deleteEntryFromModal);
+
+    $('#edit-generate').addEventListener('click', async () => {
+        const options = {
+            length: 20, useUppercase: true, useLowercase: true, useNumbers: true,
+            useSymbols: true, excludeAmbiguous: false, minDigits: 1, minSymbols: 1
+        };
+        const response = await send('pwsave_generate_password', [ options ]);
+        $('#edit-password').value = response.success ? response.data : '';
+    });
+};
+
+//--------------------------------------------------------------------------
 // Init
 //--------------------------------------------------------------------------
 
@@ -322,10 +647,11 @@ const init = async function() {
     initVaultActions();
     initSyncActions();
     initSecurityActions();
+    initEntriesActions();
 
     await loadSettings();
     await refreshSyncStatus();
-    await refreshVaultLockedState();
+    await refreshEntries();
 };
 
 init();

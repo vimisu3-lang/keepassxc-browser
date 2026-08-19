@@ -318,3 +318,72 @@ button#sitePreferencesCancelEdit {
 .no-transitions * {
     transition: none !important;
 }
+
+/* PWSave standalone: entries tab */
+#entry-table-body td {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 320px;
+}
+
+#entry-table-body tr td:first-child {
+    max-width: 240px;
+}
+
+#group-list .badge {
+    font-weight: normal;
+}
+
+/* Sortable column headers */
+th.entry-sortable {
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+}
+
+th.entry-sortable:hover {
+    text-decoration: underline;
+}
+
+.entry-sort-icon {
+    font-size: 10px;
+    color: var(--kpxc-light-text-color);
+    margin-left: 2px;
+}
+
+th.entry-sortable .fa-sort-up,
+th.entry-sortable .fa-sort-down {
+    color: var(--kpxc-link-color);
+}
+
+/* Checkbox column */
+.entry-check-col {
+    width: 32px;
+    text-align: center;
+}
+
+/* Entry edit modal: keep inputs visible against the modal background.
+   The global `input` rule (background: --kpxc-background-color) blends with
+   the dark modal surface; force a distinct input background + border here. */
+#entry-modal .form-control,
+#entry-modal .form-select {
+    background-color: var(--kpxc-input-background-color) !important;
+    border-color: var(--bs-border-color) !important;
+    color: var(--kpxc-text-color) !important;
+}
+
+#entry-modal .form-control:focus {
+    border-color: var(--kpxc-input-active-border-color) !important;
+    box-shadow: 0 0 0 0.2rem rgb(43 77 26 / 0.25);
+}
+
+#entry-modal .form-control::placeholder {
+    color: var(--kpxc-light-text-color);
+}
+
+#entry-modal .input-group-text {
+    background-color: var(--kpxc-input-background-color) !important;
+    border-color: var(--bs-border-color) !important;
+    color: var(--kpxc-text-color) !important;
+}
