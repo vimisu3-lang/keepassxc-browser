@@ -555,24 +555,6 @@ const initEvents = function() {
         await initStatus();
     });
 
-    $('#menu-delete-all').addEventListener('click', async () => {
-        $('#rf-menu').classList.add('d-none');
-        const count = currentEntries.length;
-        if (count === 0) {
-            showToast('No entries to delete');
-            return;
-        }
-        if (window.confirm(`Delete ALL ${count} entries? This cannot be undone.`)) {
-            const response = await send('pwsave_clear_entries');
-            if (response && response.success) {
-                await initVaultView();
-                showToast('All entries deleted');
-            } else {
-                showToast(response?.error || 'Delete failed');
-            }
-        }
-    });
-
     $('#signin-button').addEventListener('click', async () => {
         const response = await send('pwsave_sync_setup');
         const data = response.success ? response.data : {};

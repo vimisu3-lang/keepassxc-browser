@@ -81,12 +81,6 @@ const createVaultActions = function(deps) {
             return { success: true };
         },
 
-        'pwsave_clear_entries': async function() {
-            if (!vaultManager.isUnlocked) return { success: false, error: 'VAULT_LOCKED' };
-            await vaultManager.clearAllEntries();
-            return { success: true };
-        },
-
         'pwsave_get_totp_codes': async function() {
             if (!vaultManager.isUnlocked) return { success: false, error: 'VAULT_LOCKED' };
             const entries = vaultManager.getAllEntries().filter(e => e.totp);

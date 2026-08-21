@@ -373,22 +373,6 @@ class VaultManager {
             '| vault entries:', this.vault ? this.vault.entries.length : 'null');
     }
 
-    async clearAllEntries() {
-        const now = Date.now();
-        const deletedIds = {};
-        for (const entry of this.plaintextEntries.values()) {
-            deletedIds[entry.uuid] = now;
-        }
-        this.plaintextEntries.clear();
-        if (this.vault) {
-            this.vault.entries = [];
-            // Keep tombstones so Drive sync drops the deleted entries instead of resurrecting them.
-            this.vault.deletedIds = { ...(this.vault.deletedIds || {}), ...deletedIds };
-        }
-        await this.saveEncryptedVault();
-        console.log('[pwsave] cleared all entries, tombstones:', Object.keys(this.vault ? this.vault.deletedIds : {}).length);
-    }
-
     getAllEntries() {
         return Array.from(this.plaintextEntries.values());
     }
