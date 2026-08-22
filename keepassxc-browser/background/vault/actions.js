@@ -5,6 +5,20 @@
  * Actions are dispatched by event.js when `request.action` matches (vaultActions).
  */
 
+// Closes every open options page tab. Used when the vault gets locked so the
+// management UI cannot stay open without an unlocked vault.
+const closeOptionsTabs = async function() {
+    try {
+        const optionsUrl = browser.runtime.getURL('options/options.html');
+        const found = await browser.tabs.query({ url: optionsUrl });
+        if (found.length > 0) {
+            await browser.tabs.remove(found.map(t => t.id));
+        }
+    } catch (e) {
+        logError('closeOptionsTabs failed: ' + e);
+    }
+};
+
 const createVaultActions = function(deps) {
     return {
         'pwsave_get_status': async function() {
@@ -46,12 +60,23 @@ const createVaultActions = function(deps) {
             await vaultManager.lockVault();
             keepass.syncStatus();
             keepass.updateDatabaseHashToContent();
+            await closeOptionsTabs();
             return { success: true };
         },
 
         'pwsave_get_entries': async function() {
             if (!vaultManager.isUnlocked) return { success: false, error: 'VAULT_LOCKED' };
             return { success: true, data: vaultManager.getAllEntries() };
+        },
+
+        'pwsave_get_entries_for_url': async function(_tab, args = []) {
+            if (!vaultManager.isUnlocked) return { success: false, error: 'VAULT_LOCKED' };
+            const [ url, submitUrl ] = args;
+            if (!url) return { success: true, data: [] };
+            const data = submitUrl
+                ? vaultManager.getEntriesForUrls(url, submitUrl)
+                : vaultManager.getEntriesForUrl(url);
+            return { success: true, data };
         },
 
         'pwsave_get_entry': async function(_tab, args = []) {
@@ -133,6 +158,12 @@ const createVaultActions = function(deps) {
                     stringFields: entry.stringFields || [],
                     totp: entry.totp || ''
                 });
+                // Track usage for Popular/Recent sorts (fill via popup ... -> Fill form)
+                try {
+                    await vaultManager.bumpUsage(entry.uuid);
+                } catch {
+                    /* best effort */
+                }
                 return { success: true };
             } catch (e) {
                 return { success: false, error: 'No content script on this page' };
@@ -152,6 +183,13 @@ const createVaultActions = function(deps) {
                 tab = await browser.tabs.create({ url: entry.url, active: true });
             } catch (e) {
                 return { success: false, error: 'Could not open URL' };
+            }
+
+            // Track usage immediately (user explicitly chose this entry via Go fill)
+            try {
+                await vaultManager.bumpUsage(entry.uuid);
+            } catch {
+                /* best effort */
             }
 
             // Wait for the page to load, then try to fill (content script may need time).

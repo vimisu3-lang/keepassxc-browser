@@ -13,6 +13,7 @@ autoLockManager.setOnLock(async () => {
     await vaultManager.lockVault();
     keepass.syncStatus();
     keepass.updateDatabaseHashToContent();
+    await closeOptionsTabs();
 });
 
 autoLockManager.setOnActivity(() => {

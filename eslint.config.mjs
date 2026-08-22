@@ -74,6 +74,7 @@ export default defineConfig([globalIgnores(["**/*.min.js"]), {
             SecurityCenter: "readonly",
             createVaultActions: "readonly",
             vaultActions: "readonly",
+            closeOptionsTabs: "readonly",
         },
         ecmaVersion: 13,
         sourceType: "script",

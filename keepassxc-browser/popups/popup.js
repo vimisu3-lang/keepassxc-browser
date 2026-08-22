@@ -9,8 +9,10 @@ const send = async function(action, args = []) {
 };
 
 let currentEntries = [];
+let fillEntries = [];
 let currentSettings = null;
-let currentSort = 'popular';
+let currentView = 'fill';
+let currentTabUrl = null;
 let searchQuery = '';
 let editingUuid = null;
 let toastTimer = null;
@@ -53,19 +55,26 @@ const initVaultView = async function() {
     const entriesResponse = await send('pwsave_get_entries');
     currentEntries = entriesResponse.success ? entriesResponse.data : [];
 
-    updateAccountBadge();
+    // Resolve current tab URL for Fill Logins (matching) view
+    let activeTab = null;
+    try {
+        const tabs = await browser.tabs.query({ active: true, currentWindow: true });
+        activeTab = tabs && tabs.length > 0 ? tabs[0] : null;
+        currentTabUrl = activeTab ? activeTab.url : null;
+    } catch (e) {
+        currentTabUrl = null;
+    }
+
+    const fillResponse = currentTabUrl
+        ? await send('pwsave_get_entries_for_url', [ currentTabUrl ])
+        : { success: true, data: [] };
+    fillEntries = fillResponse && fillResponse.success ? fillResponse.data : [];
+
+    // Default to Fill tab when there are matching entries, otherwise All
+    currentView = fillEntries.length > 0 ? 'fill' : 'all';
+
+    updateViewTabs();
     renderEntries();
-};
-
-const updateAccountBadge = async function() {
-    const syncStatus = await send('pwsave_sync_get_status');
-    const s = syncStatus.data || {};
-    const account = s.account || '';
-
-    // Avatar: first 2 letters of the account email (uppercase)
-    const name = account.split('@')[0] || 'VI';
-    $('#account-avatar').textContent = name.slice(0, 2).toUpperCase();
-    $('#account-name').textContent = account ? name : 'vault';
 };
 
 const faviconUrl = function(url) {
@@ -89,33 +98,36 @@ const entryDisplayParts = function(entry) {
     return { group, name: displayName, login };
 };
 
-const sortEntries = function(entries, sort) {
+// Fixed display order: most used first, fallback to most recently used
+const sortEntries = function(entries) {
     const arr = entries.slice();
-    switch (sort) {
-        case 'recent':
-            arr.sort((a, b) => (b.lastUsedAt || b.updatedAt || 0) - (a.lastUsedAt || a.updatedAt || 0));
-            break;
-        case 'az':
-            arr.sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' }));
-            break;
-        case 'popular':
-        default:
-            // Popular: by usage count, fallback to most recently used
-            arr.sort((a, b) => {
-                const diff = (b.usageCount || 0) - (a.usageCount || 0);
-                if (diff !== 0) return diff;
-                return (b.lastUsedAt || b.updatedAt || 0) - (a.lastUsedAt || a.updatedAt || 0);
-            });
-            break;
-    }
+    arr.sort((a, b) => {
+        const diff = (b.usageCount || 0) - (a.usageCount || 0);
+        if (diff !== 0) return diff;
+        return (b.lastUsedAt || b.updatedAt || 0) - (a.lastUsedAt || a.updatedAt || 0);
+    });
     return arr;
 };
 
+const updateViewTabs = function() {
+    const fillCount = fillEntries.length;
+    const allCount = currentEntries.length;
+    const fillCountEl = $('#fill-count');
+    const allCountEl = $('#all-count');
+    if (fillCountEl) fillCountEl.textContent = fillCount > 0 ? `(${fillCount})` : '';
+    if (allCountEl) allCountEl.textContent = allCount > 0 ? `(${allCount})` : '';
+    $('#type-selector').classList.toggle('active', currentView === 'all');
+    $('#fill-button').classList.toggle('active', currentView === 'fill');
+};
+
 const renderEntries = function() {
+    updateViewTabs();
+
     const list = $('#entry-list');
     list.innerHTML = '';
 
-    let entries = sortEntries(currentEntries, currentSort);
+    const base = currentView === 'fill' ? fillEntries : currentEntries;
+    let entries = sortEntries(base);
 
     if (searchQuery) {
         const q = searchQuery.toLowerCase();
@@ -129,6 +141,15 @@ const renderEntries = function() {
 
     if (entries.length === 0) {
         $('#empty-state').classList.remove('d-none');
+        // Contextual empty text
+        const emptyEl = $('#empty-state');
+        if (currentView === 'fill' && fillEntries.length === 0 && currentEntries.length > 0) {
+            emptyEl.textContent = 'No matching logins for this site.';
+        } else if (currentView === 'fill' && currentEntries.length === 0) {
+            emptyEl.textContent = 'No entries yet.';
+        } else {
+            emptyEl.textContent = 'No entries found.';
+        }
         return;
     }
     $('#empty-state').classList.add('d-none');
@@ -367,24 +388,7 @@ const showToast = function(message) {
     toastTimer = setTimeout(() => toast.classList.remove('show'), 1500);
 };
 
-//--------------------------------------------------------------------------
-// Fill action
-//--------------------------------------------------------------------------
 
-const fillLogins = async function() {
-    const tab = await getCurrentTab();
-    if (!tab || tab.id === undefined) {
-        showToast('No active tab');
-        return;
-    }
-    try {
-        await browser.tabs.sendMessage(tab.id, { action: 'fill_username_password' });
-        showToast('Logins filled');
-        window.close();
-    } catch (e) {
-        showToast('No login form on this page');
-    }
-};
 
 //--------------------------------------------------------------------------
 // Entry modal (add / edit)
@@ -396,6 +400,9 @@ const openEntryModal = function(entry) {
     $('#edit-name').value = entry ? (entry.name || '') : '';
     $('#edit-login').value = entry ? (entry.login || '') : '';
     $('#edit-password').value = entry ? (entry.password || '') : '';
+    $('#edit-password').type = 'password';
+    $('#edit-toggle-password i').className = 'fa fa-eye';
+    $('#edit-toggle-password').title = 'Show password';
     $('#edit-url').value = entry ? (entry.url || '') : '';
     $('#edit-group').value = entry ? (entry.group || '') : '';
     $('#edit-note').value = entry ? (entry.note || '') : '';
@@ -481,8 +488,9 @@ const initEvents = function() {
     });
 
     $('#copy-action-button').addEventListener('click', async () => {
-        // Copy first visible entry's login (quick access)
-        const entries = sortEntries(currentEntries, currentSort);
+        // Copy first visible entry's login (quick access, respects current view)
+        const base = currentView === 'fill' ? fillEntries : currentEntries;
+        const entries = sortEntries(base);
         const filtered = searchQuery
             ? entries.filter(entry =>
                 (entry.name || '').toLowerCase().includes(searchQuery) ||
@@ -503,21 +511,13 @@ const initEvents = function() {
     });
 
     $('#type-selector').addEventListener('click', () => {
-        showToast('Only logins available');
+        currentView = 'all';
+        renderEntries();
     });
 
-    $('#fill-button').addEventListener('click', fillLogins);
-
-    $('.rf-account').addEventListener('click', () => browser.runtime.openOptionsPage());
-
-    // Sort tabs
-    document.querySelectorAll('.rf-tab').forEach(tab => {
-        tab.addEventListener('click', () => {
-            document.querySelectorAll('.rf-tab').forEach(t => t.classList.remove('active'));
-            tab.classList.add('active');
-            currentSort = tab.dataset.sort;
-            renderEntries();
-        });
+    $('#fill-button').addEventListener('click', () => {
+        currentView = 'fill';
+        renderEntries();
     });
 
     $('#menu-button').addEventListener('click', (e) => {
@@ -588,7 +588,6 @@ const initEvents = function() {
     });
 
     $('#fab-add').addEventListener('click', () => openEntryModal(null));
-    $('#fab-save').addEventListener('click', () => openEntryModal(null));
 
     $('#save-entry-button').addEventListener('click', saveEntry);
 
@@ -601,13 +600,13 @@ const initEvents = function() {
         }
     });
 
-    $('#edit-generate').addEventListener('click', async () => {
-        const options = {
-            length: 20, useUppercase: true, useLowercase: true, useNumbers: true,
-            useSymbols: true, excludeAmbiguous: false, minDigits: 1, minSymbols: 1
-        };
-        const response = await send('pwsave_generate_password', [ options ]);
-        $('#edit-password').value = response.success ? response.data : '';
+    $('#edit-toggle-password').addEventListener('click', () => {
+        const pw = $('#edit-password');
+        const showing = pw.type === 'text';
+        pw.type = showing ? 'password' : 'text';
+        const icon = $('#edit-toggle-password i');
+        icon.className = showing ? 'fa fa-eye' : 'fa fa-eye-slash';
+        $('#edit-toggle-password').title = showing ? 'Show password' : 'Hide password';
     });
 
     $('#gen-again').addEventListener('click', generateAndShow);

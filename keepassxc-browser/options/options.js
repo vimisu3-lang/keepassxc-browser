@@ -520,6 +520,9 @@ const openEntryModal = function(entry) {
     $('#edit-name').value = entry ? (entry.name || '') : '';
     $('#edit-login').value = entry ? (entry.login || '') : '';
     $('#edit-password').value = entry ? (entry.password || '') : '';
+    $('#edit-password').type = 'password';
+    $('#edit-toggle-password i').className = 'fa fa-eye';
+    $('#edit-toggle-password').title = 'Show password';
     $('#edit-url').value = entry ? (entry.url || '') : '';
     $('#edit-group').value = entry ? (entry.group || '') : '';
     $('#edit-note').value = entry ? (entry.note || '') : '';
@@ -622,13 +625,13 @@ const initEntriesActions = function() {
 
     $('#delete-entry-button').addEventListener('click', deleteEntryFromModal);
 
-    $('#edit-generate').addEventListener('click', async () => {
-        const options = {
-            length: 20, useUppercase: true, useLowercase: true, useNumbers: true,
-            useSymbols: true, excludeAmbiguous: false, minDigits: 1, minSymbols: 1
-        };
-        const response = await send('pwsave_generate_password', [ options ]);
-        $('#edit-password').value = response.success ? response.data : '';
+    $('#edit-toggle-password').addEventListener('click', () => {
+        const pw = $('#edit-password');
+        const showing = pw.type === 'text';
+        pw.type = showing ? 'password' : 'text';
+        const icon = $('#edit-toggle-password i');
+        icon.className = showing ? 'fa fa-eye' : 'fa fa-eye-slash';
+        $('#edit-toggle-password').title = showing ? 'Show password' : 'Hide password';
     });
 };
 
@@ -637,6 +640,17 @@ const initEntriesActions = function() {
 //--------------------------------------------------------------------------
 
 const init = async function() {
+    // Block access while the vault is locked: hide everything and close the tab.
+    const status = await send('pwsave_get_status');
+    if (status && status.unlocked === false) {
+        document.body.innerHTML = '<div class="container-fluid py-5 text-center text-muted">'
+            + '<i class="fa fa-lock fa-2x mb-3" aria-hidden="true"></i>'
+            + '<p>The vault is locked. Unlock it from the extension popup.</p>'
+            + '</div>';
+        setTimeout(() => window.close(), 1500);
+        return;
+    }
+
     document.querySelectorAll('.nav-link').forEach(link => {
         link.addEventListener('click', (e) => {
             e.preventDefault();

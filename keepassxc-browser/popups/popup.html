@@ -68,30 +68,20 @@
           </button>
         </div>
 
-        <!-- Toolbar: type selector / fill / account -->
+        <!-- Toolbar: type selector (all logins) / fill tab (matching) -->
         <div class="rf-toolbar">
           <div class="rf-toolbar-left">
-            <button id="type-selector" class="rf-type-btn" title="Switch data type">
+            <button id="type-selector" class="rf-type-btn" title="Show all logins" data-view="all">
               <i class="fa fa-lock rf-icon-green" aria-hidden="true"></i>
               <span class="rf-type-label">Logins</span>
-              <i class="fa fa-chevron-down rf-chevron" aria-hidden="true"></i>
+              <span id="all-count" class="rf-view-count"></span>
             </button>
           </div>
-          <button id="fill-button" class="rf-fill-btn" title="Fill logins on current page">
+          <button id="fill-button" class="rf-fill-btn" title="Show logins for this site" data-view="fill" type="button">
             <i class="fa fa-database rf-icon-blue" aria-hidden="true"></i>
             <span class="rf-fill-label">Fill Logins</span>
+            <span id="fill-count" class="rf-view-count"></span>
           </button>
-          <div class="rf-account" title="Account">
-            <span id="account-avatar" class="rf-avatar">VI</span>
-            <span id="account-name" class="rf-account-name">vinh</span>
-          </div>
-        </div>
-
-        <!-- Sort tabs -->
-        <div class="rf-tabs">
-          <button class="rf-tab active" data-sort="popular">Popular</button>
-          <button class="rf-tab" data-sort="recent">Recent</button>
-          <button class="rf-tab" data-sort="az">A-Z</button>
         </div>
 
         <!-- Login list -->
@@ -122,8 +112,8 @@
               <label class="form-label small mb-1">Password</label>
               <div class="input-group input-group-sm">
                 <input type="password" class="form-control" id="edit-password">
-                <button class="btn btn-outline-secondary" id="edit-generate" title="Generate password">
-                  <i class="fa fa-magic" aria-hidden="true"></i>
+                <button class="btn btn-outline-secondary" id="edit-toggle-password" title="Show password" type="button">
+                  <i class="fa fa-eye" aria-hidden="true"></i>
                 </button>
               </div>
             </div>
@@ -189,11 +179,8 @@
     <!-- Entry context menu -->
     <div id="entry-menu" class="rf-entry-menu d-none"></div>
 
-    <!-- Floating action buttons -->
+    <!-- Floating action button -->
     <div id="fab-container" class="d-none">
-      <button id="fab-save" class="rf-fab" title="Save new login">
-        <i class="fa fa-floppy-o" aria-hidden="true"></i>
-      </button>
       <button id="fab-add" class="rf-fab" title="Add new login">
         <i class="fa fa-plus" aria-hidden="true"></i>
       </button>
