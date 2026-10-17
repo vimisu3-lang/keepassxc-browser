@@ -981,6 +981,9 @@ browser.runtime.onMessage.addListener(async function(req, sender) {
             await kpxc.reconnect();
             await kpxc.receiveCredentialsIfNecessary();
             kpxcFill.fillFromTOTP();
+        } else if (req.action === 'fill_specific_totp') {
+            // 2FA code requested from the popup for a specific entry
+            return await kpxcFill.fillTotpCode(req.code);
         } else if (req.action === 'fill_attribute' && req.args) {
             await kpxc.receiveCredentialsIfNecessary();
             kpxcFill.fillAttributeToActiveElementWith(req.args);

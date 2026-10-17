@@ -16,6 +16,12 @@ let currentTabUrl = null;
 let searchQuery = '';
 let editingUuid = null;
 let toastTimer = null;
+let generatorInitialized = false;
+let totpCodes = {};
+let totpTicker = null;
+let totpOriginal = '';
+let totpChangeRequested = false;
+let totpRemoveRequested = false;
 
 //--------------------------------------------------------------------------
 // Screens
@@ -27,6 +33,12 @@ const showScreen = function(name) {
     });
     document.getElementById(name).classList.remove('d-none');
     document.getElementById('fab-container').classList.toggle('d-none', name !== 'vault-view');
+
+    // No point counting down 2FA codes while the vault view is not visible
+    if (name !== 'vault-view' && totpTicker) {
+        clearInterval(totpTicker);
+        totpTicker = null;
+    }
 };
 
 const initStatus = async function() {
@@ -52,6 +64,7 @@ const initStatus = async function() {
 const initVaultView = async function() {
     showScreen('vault-view');
     currentSettings = (await send('pwsave_get_settings')).data || {};
+    applyGeneratorDefaults();
     const entriesResponse = await send('pwsave_get_entries');
     currentEntries = entriesResponse.success ? entriesResponse.data : [];
 
@@ -73,8 +86,12 @@ const initVaultView = async function() {
     // Default to Fill tab when there are matching entries, otherwise All
     currentView = fillEntries.length > 0 ? 'fill' : 'all';
 
+    // 2FA codes for the entries that have TOTP configured
+    await refreshTotpCodes();
+
     updateViewTabs();
     renderEntries();
+    startTotpTicker();
 };
 
 const faviconUrl = function(url) {
@@ -204,6 +221,27 @@ const renderEntries = function() {
             body.append(sub);
         }
 
+        // 2FA: live code + countdown (click to copy)
+        if (entry.totp) {
+            const totp = totpCodes[entry.uuid];
+            const chip = document.createElement('div');
+            chip.className = 'rf-totp-chip' + (totp && totp.remaining <= 5 ? ' expiring' : '');
+            if (totp) {
+                chip.title = 'Click to copy 2FA code';
+                chip.innerHTML = `<i class="fa fa-shield" aria-hidden="true"></i> <span class="rf-totp-code">${formatTotpCode(totp.code)}</span> <span class="rf-totp-remaining" data-uuid="${entry.uuid}">${totp.remaining}s</span>`;
+                chip.addEventListener('click', (e) => {
+                    if (e.isTrusted) {
+                        e.stopPropagation();
+                        copyTotpCode(entry);
+                    }
+                });
+            } else {
+                chip.title = '2FA is enabled for this entry';
+                chip.innerHTML = '<i class="fa fa-shield" aria-hidden="true"></i> <span class="rf-totp-code">2FA</span>';
+            }
+            body.append(chip);
+        }
+
         // Actions on hover
         const actions = document.createElement('div');
         actions.className = 'rf-entry-actions';
@@ -289,6 +327,10 @@ const showEntryMenu = function(entry, x, y) {
             await copyText(entry.login);
             showToast('Username copied');
         });
+    }
+    if (entry.totp) {
+        addItem('Copy 2FA code', 'fa-shield', () => copyTotpCode(entry));
+        addItem('Fill 2FA code', 'fa-key', () => fillTotpOnTab(entry));
     }
     addSep();
     addItem('Go fill', 'fa-globe', () => goFill(entry));
@@ -388,11 +430,144 @@ const showToast = function(message) {
     toastTimer = setTimeout(() => toast.classList.remove('show'), 1500);
 };
 
+//--------------------------------------------------------------------------
+// 2FA (TOTP)
+//--------------------------------------------------------------------------
 
+const formatTotpCode = function(code) {
+    const text = String(code || '');
+    if (text.length === 6) return `${text.slice(0, 3)} ${text.slice(3)}`;
+    if (text.length === 8) return `${text.slice(0, 4)} ${text.slice(4)}`;
+    return text;
+};
+
+const refreshTotpCodes = async function() {
+    totpCodes = {};
+    const response = await send('pwsave_get_totp_codes');
+    if (response && response.success && Array.isArray(response.data)) {
+        for (const item of response.data) {
+            totpCodes[item.uuid] = item;
+        }
+    }
+};
+
+// Count down in place, and re-fetch the codes when a time window expires
+const startTotpTicker = function() {
+    if (totpTicker) {
+        return;
+    }
+
+    totpTicker = setInterval(async () => {
+        let expired = false;
+        for (const totp of Object.values(totpCodes)) {
+            totp.remaining -= 1;
+            if (totp.remaining <= 0) {
+                expired = true;
+            }
+        }
+
+        if (expired) {
+            await refreshTotpCodes();
+            renderEntries();
+            return;
+        }
+
+        document.querySelectorAll('.rf-totp-remaining').forEach(el => {
+            const totp = totpCodes[el.dataset.uuid];
+            if (!totp) {
+                return;
+            }
+            el.textContent = `${totp.remaining}s`;
+            el.closest('.rf-totp-chip')?.classList.toggle('expiring', totp.remaining <= 5);
+        });
+    }, 1000);
+};
+
+const copyTotpCode = async function(entry) {
+    let code = totpCodes[entry.uuid]?.code;
+    if (!code) {
+        await refreshTotpCodes();
+        renderEntries();
+        code = totpCodes[entry.uuid]?.code;
+    }
+
+    if (!code) {
+        showToast('No 2FA code for this entry');
+        return;
+    }
+
+    await copyText(code);
+    showToast('2FA code copied');
+};
+
+const fillTotpOnTab = async function(entry) {
+    const tab = await getCurrentTab();
+    if (!tab || tab.id === undefined) {
+        showToast('No active tab');
+        return;
+    }
+
+    const response = await send('pwsave_fill_totp', [ entry.uuid, tab.id ]);
+    if (response && response.success) {
+        showToast('2FA code filled');
+        window.close();
+    } else {
+        showToast(response?.error || 'Could not fill 2FA code');
+    }
+};
 
 //--------------------------------------------------------------------------
 // Entry modal (add / edit)
 //--------------------------------------------------------------------------
+
+const setPasswordVisible = function(visible) {
+    $('#edit-password').type = visible ? 'text' : 'password';
+    $('#edit-toggle-password i').className = visible ? 'fa fa-eye-slash' : 'fa fa-eye';
+    $('#edit-toggle-password').title = visible ? 'Hide password' : 'Show password';
+};
+
+// Short description of a stored 2FA URI, e.g. "alice · 6 digits · SHA1 · 30s"
+const describeTotp = function(uri) {
+    try {
+        const parsed = new URL(uri);
+        const issuer = (parsed.searchParams.get('issuer') || '').trim();
+        let label = decodeURIComponent(parsed.pathname.replace(/^\//, '')) || 'TOTP';
+        if (issuer && label.toLowerCase().startsWith(issuer.toLowerCase() + ':')) {
+            label = label.slice(issuer.length + 1).trim();
+        } else if (label.includes(':')) {
+            label = label.slice(label.indexOf(':') + 1).trim();
+        }
+
+        const algorithm = (parsed.searchParams.get('algorithm') || 'SHA1').toUpperCase();
+        const digits = parsed.searchParams.get('digits') || '6';
+        const period = parsed.searchParams.get('period') || '30';
+        return `${label} · ${digits} digits · ${algorithm} · ${period}s`;
+    } catch (e) {
+        return '2FA is enabled';
+    }
+};
+
+// The TOTP inputs are only shown when needed: so an existing secret is never wiped by accident
+const updateTotpEditor = function() {
+    const hasTotp = !!totpOriginal;
+    const showFields = !hasTotp || totpChangeRequested;
+
+    $('#edit-totp-status').classList.toggle('d-none', showFields);
+    $('#edit-totp-fields').classList.toggle('d-none', !showFields);
+    if (showFields) {
+        return;
+    }
+
+    $('#edit-totp-status-icon').innerHTML = totpRemoveRequested
+        ? '<i class="fa fa-exclamation-triangle text-danger" aria-hidden="true"></i>'
+        : '<i class="fa fa-shield text-success" aria-hidden="true"></i>';
+    const text = $('#edit-totp-status-text');
+    text.textContent = totpRemoveRequested ? '2FA will be removed when you save' : describeTotp(totpOriginal);
+    text.classList.toggle('text-danger', totpRemoveRequested);
+    text.classList.toggle('text-muted', !totpRemoveRequested);
+    $('#edit-totp-change').textContent = totpRemoveRequested ? 'Undo' : 'Replace';
+    $('#edit-totp-remove').classList.toggle('d-none', totpRemoveRequested);
+};
 
 const openEntryModal = function(entry) {
     editingUuid = entry ? entry.uuid : null;
@@ -400,14 +575,16 @@ const openEntryModal = function(entry) {
     $('#edit-name').value = entry ? (entry.name || '') : '';
     $('#edit-login').value = entry ? (entry.login || '') : '';
     $('#edit-password').value = entry ? (entry.password || '') : '';
-    $('#edit-password').type = 'password';
-    $('#edit-toggle-password i').className = 'fa fa-eye';
-    $('#edit-toggle-password').title = 'Show password';
+    setPasswordVisible(false);
     $('#edit-url').value = entry ? (entry.url || '') : '';
     $('#edit-group').value = entry ? (entry.group || '') : '';
     $('#edit-note').value = entry ? (entry.note || '') : '';
+    totpOriginal = entry ? (entry.totp || '') : '';
+    totpChangeRequested = false;
+    totpRemoveRequested = false;
     $('#edit-totp-secret').value = '';
     $('#edit-totp-label').value = '';
+    updateTotpEditor();
     $('#delete-entry-button').classList.toggle('d-none', !entry);
     bootstrap.Modal.getOrCreateInstance($('#entry-modal')).show();
 };
@@ -422,14 +599,21 @@ const saveEntry = async function() {
     const totpSecret = $('#edit-totp-secret').value.trim().replace(/\s/g, '');
     const totpLabel = $('#edit-totp-label').value.trim();
 
-    let totpUri = '';
+    // undefined = keep the stored 2FA secret untouched
+    let totp;
     if (totpSecret) {
         const label = encodeURIComponent(totpLabel || name || login || 'TOTP');
-        totpUri = `otpauth://totp/${label}?secret=${encodeURIComponent(totpSecret).replace(/%20/g, '')}`;
+        totp = `otpauth://totp/${label}?secret=${encodeURIComponent(totpSecret).replace(/%20/g, '')}`;
+    } else if (totpRemoveRequested && totpOriginal) {
+        totp = '';
     }
 
     if (editingUuid) {
-        await send('pwsave_update_entry', [ editingUuid, { name, login, password, url, group, note, totp: totpUri } ]);
+        const updates = { name, login, password, url, group, note };
+        if (totp !== undefined) {
+            updates.totp = totp;
+        }
+        await send('pwsave_update_entry', [ editingUuid, updates ]);
     } else {
         const entry = {
             uuid: crypto.randomUUID(),
@@ -440,7 +624,7 @@ const saveEntry = async function() {
             group,
             note,
             stringFields: [],
-            totp: totpUri,
+            totp: totp || '',
             createdAt: Date.now(),
             updatedAt: Date.now()
         };
@@ -455,19 +639,78 @@ const saveEntry = async function() {
 // Password generator
 //--------------------------------------------------------------------------
 
-const generateAndShow = async function() {
-    const options = {
-        length: Number($('#gen-length').value) || 20,
-        useUppercase: true,
-        useLowercase: true,
-        useNumbers: $('#gen-numbers').checked,
-        useSymbols: $('#gen-symbols').checked,
-        excludeAmbiguous: false,
-        minDigits: 1,
-        minSymbols: 1
+// Use the generator defaults saved in Settings as the starting values
+// (applied once per popup session, so in-popup tweaks are not reverted)
+const applyGeneratorDefaults = function() {
+    if (generatorInitialized) return;
+    generatorInitialized = true;
+
+    const defaults = (currentSettings && currentSettings.passwordGeneratorDefaults) || {};
+    if (typeof defaults.length === 'number') {
+        $('#gen-length').value = defaults.length;
+    }
+    $('#gen-uppercase').checked = defaults.useUppercase !== false;
+    $('#gen-lowercase').checked = defaults.useLowercase !== false;
+    $('#gen-numbers').checked = defaults.useNumbers !== false;
+    $('#gen-symbols').checked = defaults.useSymbols !== false;
+    $('#gen-ambiguous').checked = defaults.excludeAmbiguous === true;
+};
+
+const generatorOptions = function() {
+    const useNumbers = $('#gen-numbers').checked;
+    const useSymbols = $('#gen-symbols').checked;
+    return {
+        length: Math.min(128, Math.max(4, Number($('#gen-length').value) || 20)),
+        useUppercase: $('#gen-uppercase').checked,
+        useLowercase: $('#gen-lowercase').checked,
+        useNumbers,
+        useSymbols,
+        excludeAmbiguous: $('#gen-ambiguous').checked,
+        minDigits: useNumbers ? 1 : 0,
+        minSymbols: useSymbols ? 1 : 0
     };
-    const response = await send('pwsave_generate_password', [ options ]);
-    $('#gen-password').value = response.success ? response.data : '';
+};
+
+const requestPassword = async function() {
+    const options = generatorOptions();
+    if (!options.useUppercase && !options.useLowercase && !options.useNumbers && !options.useSymbols) {
+        return { success: false, error: 'Select at least one character set' };
+    }
+    return await send('pwsave_generate_password', [ options ]);
+};
+
+const generateAndShow = async function() {
+    const response = await requestPassword();
+    const errorEl = $('#gen-error');
+    if (response && response.success) {
+        $('#gen-password').value = response.data;
+        errorEl.classList.add('d-none');
+    } else {
+        $('#gen-password').value = '';
+        errorEl.textContent = (response && response.error) || 'Could not generate password';
+        errorEl.classList.remove('d-none');
+    }
+};
+
+const openGenerator = async function() {
+    bootstrap.Modal.getOrCreateInstance($('#generator-modal')).show();
+    await generateAndShow();
+};
+
+// Hand the generated password over to the add-entry modal
+const useGeneratedInNewEntry = function() {
+    const password = $('#gen-password').value;
+    const modalEl = $('#generator-modal');
+    modalEl.addEventListener('hidden.bs.modal', () => {
+        openEntryModal(null);
+        if (password) {
+            $('#edit-password').value = password;
+        }
+        if (currentTabUrl && /^https?:/i.test(currentTabUrl)) {
+            $('#edit-url').value = currentTabUrl;
+        }
+    }, { once: true });
+    bootstrap.Modal.getOrCreateInstance(modalEl).hide();
 };
 
 //--------------------------------------------------------------------------
@@ -601,22 +844,62 @@ const initEvents = function() {
     });
 
     $('#edit-toggle-password').addEventListener('click', () => {
-        const pw = $('#edit-password');
-        const showing = pw.type === 'text';
-        pw.type = showing ? 'password' : 'text';
-        const icon = $('#edit-toggle-password i');
-        icon.className = showing ? 'fa fa-eye' : 'fa fa-eye-slash';
-        $('#edit-toggle-password').title = showing ? 'Show password' : 'Hide password';
+        setPasswordVisible($('#edit-password').type !== 'text');
+    });
+
+    $('#edit-generate-password').addEventListener('click', async () => {
+        const response = await requestPassword();
+        if (!response || !response.success) {
+            showToast((response && response.error) || 'Could not generate password');
+            return;
+        }
+        $('#edit-password').value = response.data;
+        setPasswordVisible(true);
+        showToast('Password generated');
+    });
+
+    $('#edit-totp-change').addEventListener('click', () => {
+        if (totpRemoveRequested) {
+            // Undo a pending removal
+            totpRemoveRequested = false;
+            updateTotpEditor();
+            return;
+        }
+
+        totpChangeRequested = true;
+        $('#edit-totp-secret').value = '';
+        $('#edit-totp-label').value = '';
+        updateTotpEditor();
+        $('#edit-totp-secret').focus();
+    });
+
+    $('#edit-totp-remove').addEventListener('click', () => {
+        totpRemoveRequested = true;
+        totpChangeRequested = false;
+        $('#edit-totp-secret').value = '';
+        $('#edit-totp-label').value = '';
+        updateTotpEditor();
+    });
+
+    $('#menu-generator').addEventListener('click', async () => {
+        $('#rf-menu').classList.add('d-none');
+        await openGenerator();
     });
 
     $('#gen-again').addEventListener('click', generateAndShow);
-    $('#gen-copy').addEventListener('click', () => {
-        copyText($('#gen-password').value);
+    $('#gen-new-entry').addEventListener('click', useGeneratedInNewEntry);
+    $('#gen-copy').addEventListener('click', async () => {
+        const password = $('#gen-password').value;
+        if (!password) return;
+        await copyText(password);
         showToast('Password copied');
     });
     $('#gen-length').addEventListener('change', generateAndShow);
     $('#gen-symbols').addEventListener('change', generateAndShow);
     $('#gen-numbers').addEventListener('change', generateAndShow);
+    $('#gen-uppercase').addEventListener('change', generateAndShow);
+    $('#gen-lowercase').addEventListener('change', generateAndShow);
+    $('#gen-ambiguous').addEventListener('change', generateAndShow);
 };
 
 (async () => {

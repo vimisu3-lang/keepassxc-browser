@@ -193,6 +193,12 @@ body {
     color: var(--rf-red);
 }
 
+.rf-menu-sep {
+    height: 1px;
+    background: var(--rf-border);
+    margin: 4px 8px;
+}
+
 /* ============================================================
    Toolbar: type selector / fill / account
    ============================================================ */
@@ -462,6 +468,54 @@ body {
     margin: 4px 8px;
 }
 
+/* ============================================================
+   2FA (TOTP) code chip in the entry list
+   ============================================================ */
+
+.rf-totp-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin-top: 3px;
+    padding: 1px 6px;
+    background: rgba(76, 175, 80, 0.12);
+    border: 1px solid rgba(76, 175, 80, 0.3);
+    border-radius: 4px;
+    color: var(--rf-green);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    cursor: pointer;
+    width: fit-content;
+}
+
+.rf-totp-chip:hover {
+    background: rgba(76, 175, 80, 0.22);
+}
+
+.rf-totp-chip i {
+    font-size: 10px;
+}
+
+.rf-totp-code {
+    font-family: 'SFMono-Regular', Menlo, Consolas, monospace;
+    letter-spacing: 0.5px;
+}
+
+.rf-totp-remaining {
+    color: var(--rf-text-muted);
+    font-size: 10px;
+}
+
+.rf-totp-chip.expiring {
+    background: rgba(234, 67, 53, 0.15);
+    border-color: rgba(234, 67, 53, 0.4);
+    color: var(--rf-red);
+}
+
+.rf-totp-chip.expiring .rf-totp-remaining {
+    color: var(--rf-red);
+}
+
 .rf-entry-badge {
     width: 8px;
     height: 8px;
@@ -540,6 +594,11 @@ body {
 /* ============================================================
    Legacy helpers (keep bootstrap modals sane in dark)
    ============================================================ */
+
+#gen-password {
+    font-family: 'SFMono-Regular', Menlo, Consolas, monospace;
+    font-size: 12px;
+}
 
 .modal-content {
     background: var(--rf-surface) !important;

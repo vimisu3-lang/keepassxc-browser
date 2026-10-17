@@ -4,6 +4,9 @@ const MAX_CHILDREN = 50;
 const MAX_INPUTS = 100;
 const MAX_MUTATIONS = 200;
 
+// Retry intervals for finding and registering Shadow DOM trees created after the page has loaded
+const SHADOW_DOM_REGISTER_TIMEOUTS = [ 2000, 6000 ];
+
 MutationObserver = window.MutationObserver || window.WebKitMutationObserver;
 
 /**
@@ -63,64 +66,81 @@ kpxcObserverHelper.observerConfig = {
 
 // Initializes MutationObserver
 kpxcObserverHelper.initObserver = async function() {
-    kpxc.observer = new MutationObserver(function(mutations, obs) {
-        if (document.visibilityState === 'hidden' || kpxcUI.mouseDown) {
-            return;
-        }
-
-        // Limit the maximum number of mutations
-        if (mutations.length > MAX_MUTATIONS) {
-            mutations = mutations.slice(0, MAX_MUTATIONS);
-        }
-
-        const styleMutations = [];
-        for (const mut of mutations) {
-            if (kpxcObserverHelper.ignoredNode(mut.target)) {
-                continue;
-            }
-
-            if (kpxcFields.hasOverlay(mut.target)) {
-                kpxcFields.discoverOverlays();
-                kpxcFields.checkExistingFields();
-                continue;
-            }
-
-            // Cache style mutations. We only need the last style mutation of the target.
-            kpxcObserverHelper.cacheStyle(mut, styleMutations, mutations.length);
-
-            if (mut.type === 'childList') {
-                mut.addedNodes.forEach(function (node) {
-                    kpxcObserverHelper.handleObserverAdd(node);
-                });
-                mut.removedNodes.forEach(function (node) {
-                    kpxcObserverHelper.handleObserverRemove(node);
-                });
-            } else if (mut.type === 'attributes' && (mut.attributeName === 'class' || mut.attributeName === 'style')) {
-                // Only accept targets with forms
-                const forms = matchesWithNodeName(mut.target, 'FORM')
-                    ? mut.target
-                    : mut.target.getElementsByTagName('form');
-                if (forms?.length === 0 && !kpxcSites.exceptionFound(mut.target.classList, mut.target)) {
-                    continue;
-                }
-
-                // There's an issue here. We cannot know for sure if the class attribute if added or removed.
-                kpxcObserverHelper.handleObserverAdd(mut.target);
-            }
-        }
-
-        // Handle cached style mutations
-        for (const styleMut of styleMutations) {
-            if (styleMut.display !== 'none' && styleMut.display !== '') {
-                kpxcObserverHelper.handleObserverAdd(styleMut.target);
-            } else {
-                kpxcObserverHelper.handleObserverRemove(styleMut.target);
-            }
-        }
-    });
+    kpxc.observer = new MutationObserver(kpxcObserverHelper.handleMutations);
 
     if (document.body) {
         kpxc.observer.observe(document.body, kpxcObserverHelper.observerConfig);
+
+        // Mutations inside Shadow DOM are not visible for the page observer, so every Shadow DOM
+        // tree must be observed separately. Some pages render the login form there a bit later.
+        kpxcObserverHelper.registerShadowRoots(document.body);
+        for (const timeout of SHADOW_DOM_REGISTER_TIMEOUTS) {
+            setTimeout(function() {
+                if (document.visibilityState !== 'hidden'
+                    && kpxc.inputs.length === 0
+                    && kpxc.combinations.length === 0) {
+                    kpxcObserverHelper.registerShadowRoots(document.body);
+                }
+            }, timeout);
+        }
+    }
+};
+
+// Handles mutations from the page and Shadow DOM observers
+kpxcObserverHelper.handleMutations = function(mutations) {
+    if (document.visibilityState === 'hidden' || kpxcUI.mouseDown) {
+        return;
+    }
+
+    // Limit the maximum number of mutations
+    if (mutations.length > MAX_MUTATIONS) {
+        mutations = mutations.slice(0, MAX_MUTATIONS);
+    }
+
+    const styleMutations = [];
+    for (const mut of mutations) {
+        if (kpxcObserverHelper.ignoredNode(mut.target)) {
+            continue;
+        }
+
+        if (kpxcFields.hasOverlay(mut.target)) {
+            kpxcFields.discoverOverlays();
+            kpxcFields.checkExistingFields();
+            continue;
+        }
+
+        // Cache style mutations. We only need the last style mutation of the target.
+        kpxcObserverHelper.cacheStyle(mut, styleMutations, mutations.length);
+
+        if (mut.type === 'childList') {
+            mut.addedNodes.forEach(function (node) {
+                kpxcObserverHelper.registerShadowRoots(node);
+                kpxcObserverHelper.handleObserverAdd(node);
+            });
+            mut.removedNodes.forEach(function (node) {
+                kpxcObserverHelper.handleObserverRemove(node);
+            });
+        } else if (mut.type === 'attributes' && (mut.attributeName === 'class' || mut.attributeName === 'style')) {
+            // Only accept targets with forms
+            const forms = matchesWithNodeName(mut.target, 'FORM')
+                ? mut.target
+                : mut.target.getElementsByTagName('form');
+            if (forms?.length === 0 && !kpxcSites.exceptionFound(mut.target.classList, mut.target)) {
+                continue;
+            }
+
+            // There's an issue here. We cannot know for sure if the class attribute if added or removed.
+            kpxcObserverHelper.handleObserverAdd(mut.target);
+        }
+    }
+
+    // Handle cached style mutations
+    for (const styleMut of styleMutations) {
+        if (styleMut.display !== 'none' && styleMut.display !== '') {
+            kpxcObserverHelper.handleObserverAdd(styleMut.target);
+        } else {
+            kpxcObserverHelper.handleObserverRemove(styleMut.target);
+        }
     }
 };
 
@@ -288,6 +308,14 @@ kpxcObserverHelper.handleObserverAdd = async function(target) {
         return;
     }
 
+    // Shadow DOM fields are not found by the page load scan. Keep the detected field list up-to-date
+    // so that the fields are not detected again, and they are handled like any other field.
+    for (const input of inputs) {
+        if (!kpxc.inputs.includes(input)) {
+            kpxc.inputs.push(input);
+        }
+    }
+
     await kpxc.initCombinations(inputs);
     await kpxcIcons.initIcons(kpxc.combinations);
 
@@ -309,12 +337,80 @@ kpxcObserverHelper.handleObserverRemove = function(target) {
         return;
     }
 
+    // Stop observing the Shadow DOM trees that were removed from the document
+    kpxcObserverHelper.unregisterShadowRoots(target);
+
     const inputs = kpxcObserverHelper.getInputs(target, true);
     if (inputs.length === 0) {
         return;
     }
 
     kpxcIcons.deleteAllHiddenIcons();
+};
+
+// Registers a Shadow DOM tree and observes the mutations inside it. Shadow DOM trees are not part
+// of the page tree, so a page MutationObserver never sees the content rendered inside them.
+kpxcObserverHelper.observeShadowRoot = function(shadowRoot) {
+    if (!shadowRoot || shadowRoot._kpxcObserver || shadowRoot._kpxcUI) {
+        return;
+    }
+
+    const observer = new MutationObserver(kpxcObserverHelper.handleMutations);
+    observer.observe(shadowRoot, kpxcObserverHelper.observerConfig);
+
+    // Keep the reference in the Shadow DOM tree, so the observer can be disconnected when the tree is removed
+    shadowRoot._kpxcObserver = observer;
+
+    // Handle possible nested Shadow DOM trees
+    kpxcObserverHelper.registerShadowRoots(shadowRoot);
+
+    // Detect the input fields that have been already rendered inside the Shadow DOM
+    if (shadowRoot.childElementCount > 0) {
+        kpxcObserverHelper.handleObserverAdd(shadowRoot.host);
+    }
+};
+
+// Finds all Shadow DOM trees from the target and observes them
+kpxcObserverHelper.registerShadowRoots = function(target) {
+    if (!target
+        || (target.nodeType !== Node.ELEMENT_NODE && target.nodeType !== Node.DOCUMENT_FRAGMENT_NODE)) {
+        return;
+    }
+
+    const treeWalker = document.createTreeWalker(target, NodeFilter.SHOW_ELEMENT, null);
+    let currentNode = target.nodeType === Node.ELEMENT_NODE ? target : treeWalker.nextNode();
+
+    while (currentNode) {
+        // The extension adds its own Shadow DOM trees to the page. Those must not be registered
+        const shadowRoot = getShadowDOM(currentNode);
+        if (shadowRoot && !shadowRoot._kpxcUI) {
+            kpxcObserverHelper.observeShadowRoot(shadowRoot);
+        }
+
+        currentNode = treeWalker.nextNode();
+    }
+};
+
+// Stops observing the Shadow DOM trees that have been removed from the document
+kpxcObserverHelper.unregisterShadowRoots = function(target) {
+    if (!target
+        || (target.nodeType !== Node.ELEMENT_NODE && target.nodeType !== Node.DOCUMENT_FRAGMENT_NODE)) {
+        return;
+    }
+
+    const treeWalker = document.createTreeWalker(target, NodeFilter.SHOW_ELEMENT, null);
+    let currentNode = target.nodeType === Node.ELEMENT_NODE ? target : treeWalker.nextNode();
+
+    while (currentNode) {
+        const shadowRoot = getShadowDOM(currentNode);
+        if (shadowRoot?._kpxcObserver && !shadowRoot.host?.isConnected) {
+            shadowRoot._kpxcObserver.disconnect();
+            delete shadowRoot._kpxcObserver;
+            kpxcObserverHelper.unregisterShadowRoots(shadowRoot);
+        }
+
+        currentNode = treeWalker.nextNode();
+    }
 };
 
 // Handles CSS transitionend event
@@ -362,10 +458,19 @@ const getShadowDOM = function(elem) {
     }
 
     try {
-        return elem.openOrClosedShadowRoot ? elem.openOrClosedShadowRoot : browser.dom.openOrClosedShadowRoot(elem);
+        // Firefox returns the Shadow DOM directly from the element
+        const shadowRoot = elem.openOrClosedShadowRoot
+            ? elem.openOrClosedShadowRoot
+            : browser.dom.openOrClosedShadowRoot(elem);
+
+        if (shadowRoot?.nodeType === Node.DOCUMENT_FRAGMENT_NODE) {
+            return shadowRoot;
+        }
     } catch (_e) {
-        return elem.shadowRoot;
+        // Fall back to the open Shadow DOM
     }
+
+    return elem.shadowRoot;
 };
 
 // Filter for TreeWalker

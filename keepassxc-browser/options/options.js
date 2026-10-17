@@ -24,6 +24,7 @@ const OPTION_FIELDS = {
     showLoginFormIcon: 'usernameIconsCheckBox',
     usePasswordGeneratorIcons: 'passwordIconsCheckBox',
     showOTPIcon: 'totpIconsCheckBox',
+    autoFillSingleTotp: 'autoFillTotpCheckBox',
     showNotifications: 'notificationsCheckBox',
     useMonochromeToolbarIcon: 'monochromeCheckBox',
     autoFillSingleEntry: 'autoFillSingleCheckBox',
@@ -318,7 +319,10 @@ const entriesState = {
     groupFilter: '',
     editingUuid: null,
     sort: { key: null, dir: 1 },
-    selected: new Set()
+    selected: new Set(),
+    totpOriginal: '',
+    totpChangeRequested: false,
+    totpRemoveRequested: false
 };
 
 const collectGroups = function() {
@@ -514,6 +518,49 @@ const deleteEntry = async function(entry) {
     await refreshEntries();
 };
 
+// Short description of a stored 2FA URI, e.g. "alice · 6 digits · SHA1 · 30s"
+const describeTotp = function(uri) {
+    try {
+        const parsed = new URL(uri);
+        const issuer = (parsed.searchParams.get('issuer') || '').trim();
+        let label = decodeURIComponent(parsed.pathname.replace(/^\//, '')) || 'TOTP';
+        if (issuer && label.toLowerCase().startsWith(issuer.toLowerCase() + ':')) {
+            label = label.slice(issuer.length + 1).trim();
+        } else if (label.includes(':')) {
+            label = label.slice(label.indexOf(':') + 1).trim();
+        }
+
+        const algorithm = (parsed.searchParams.get('algorithm') || 'SHA1').toUpperCase();
+        const digits = parsed.searchParams.get('digits') || '6';
+        const period = parsed.searchParams.get('period') || '30';
+        return `${label} · ${digits} digits · ${algorithm} · ${period}s`;
+    } catch (e) {
+        return '2FA is enabled';
+    }
+};
+
+// The TOTP inputs are only shown when needed: so an existing secret is never wiped by accident
+const updateTotpEditor = function() {
+    const hasTotp = !!entriesState.totpOriginal;
+    const showFields = !hasTotp || entriesState.totpChangeRequested;
+
+    $('#edit-totp-status').classList.toggle('d-none', showFields);
+    $('#edit-totp-fields').classList.toggle('d-none', !showFields);
+    if (showFields) {
+        return;
+    }
+
+    $('#edit-totp-status-icon').innerHTML = entriesState.totpRemoveRequested
+        ? '<i class="fa fa-exclamation-triangle text-danger" aria-hidden="true"></i>'
+        : '<i class="fa fa-shield text-success" aria-hidden="true"></i>';
+    const text = $('#edit-totp-status-text');
+    text.textContent = entriesState.totpRemoveRequested ? '2FA will be removed when you save' : describeTotp(entriesState.totpOriginal);
+    text.classList.toggle('text-danger', entriesState.totpRemoveRequested);
+    text.classList.toggle('text-muted', !entriesState.totpRemoveRequested);
+    $('#edit-totp-change').textContent = entriesState.totpRemoveRequested ? 'Undo' : 'Replace';
+    $('#edit-totp-remove').classList.toggle('d-none', entriesState.totpRemoveRequested);
+};
+
 const openEntryModal = function(entry) {
     entriesState.editingUuid = entry ? entry.uuid : null;
     $('#entry-modal-title').textContent = entry ? 'Edit entry' : 'Add entry';
@@ -526,8 +573,12 @@ const openEntryModal = function(entry) {
     $('#edit-url').value = entry ? (entry.url || '') : '';
     $('#edit-group').value = entry ? (entry.group || '') : '';
     $('#edit-note').value = entry ? (entry.note || '') : '';
+    entriesState.totpOriginal = entry ? (entry.totp || '') : '';
+    entriesState.totpChangeRequested = false;
+    entriesState.totpRemoveRequested = false;
     $('#edit-totp-secret').value = '';
     $('#edit-totp-label').value = '';
+    updateTotpEditor();
     $('#delete-entry-button').classList.toggle('d-none', !entry);
     renderGroupOptions();
     bootstrap.Modal.getOrCreateInstance($('#entry-modal')).show();
@@ -543,14 +594,21 @@ const saveEntry = async function() {
     const totpSecret = $('#edit-totp-secret').value.trim().replace(/\s/g, '');
     const totpLabel = $('#edit-totp-label').value.trim();
 
-    let totpUri = '';
+    // undefined = keep the stored 2FA secret untouched
+    let totp;
     if (totpSecret) {
         const label = encodeURIComponent(totpLabel || name || login || 'TOTP');
-        totpUri = `otpauth://totp/${label}?secret=${encodeURIComponent(totpSecret).replace(/%20/g, '')}`;
+        totp = `otpauth://totp/${label}?secret=${encodeURIComponent(totpSecret).replace(/%20/g, '')}`;
+    } else if (entriesState.totpRemoveRequested && entriesState.totpOriginal) {
+        totp = '';
     }
 
     if (entriesState.editingUuid) {
-        await send('pwsave_update_entry', [ entriesState.editingUuid, { name, login, password, url, group, note, totp: totpUri } ]);
+        const updates = { name, login, password, url, group, note };
+        if (totp !== undefined) {
+            updates.totp = totp;
+        }
+        await send('pwsave_update_entry', [ entriesState.editingUuid, updates ]);
     } else {
         const entry = {
             uuid: crypto.randomUUID(),
@@ -561,7 +619,7 @@ const saveEntry = async function() {
             group,
             note,
             stringFields: [],
-            totp: totpUri,
+            totp: totp || '',
             createdAt: Date.now(),
             updatedAt: Date.now()
         };
@@ -632,6 +690,29 @@ const initEntriesActions = function() {
         const icon = $('#edit-toggle-password i');
         icon.className = showing ? 'fa fa-eye' : 'fa fa-eye-slash';
         $('#edit-toggle-password').title = showing ? 'Show password' : 'Hide password';
+    });
+
+    $('#edit-totp-change').addEventListener('click', () => {
+        if (entriesState.totpRemoveRequested) {
+            // Undo a pending removal
+            entriesState.totpRemoveRequested = false;
+            updateTotpEditor();
+            return;
+        }
+
+        entriesState.totpChangeRequested = true;
+        $('#edit-totp-secret').value = '';
+        $('#edit-totp-label').value = '';
+        updateTotpEditor();
+        $('#edit-totp-secret').focus();
+    });
+
+    $('#edit-totp-remove').addEventListener('click', () => {
+        entriesState.totpRemoveRequested = true;
+        entriesState.totpChangeRequested = false;
+        $('#edit-totp-secret').value = '';
+        $('#edit-totp-label').value = '';
+        updateTotpEditor();
     });
 };
 

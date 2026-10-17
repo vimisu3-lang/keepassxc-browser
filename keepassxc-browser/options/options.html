@@ -96,6 +96,12 @@
                   </div>
                   <div class="form-group pb-1">
                     <div class="form-check form-switch">
+                      <input class="form-check-input" type="checkbox" name="autoFillSingleTotp" id="autoFillTotpCheckBox" value="true">
+                      <label class="form-check-label" for="autoFillTotpCheckBox">Auto-fill TOTP code when an entry with 2FA is filled</label>
+                    </div>
+                  </div>
+                  <div class="form-group pb-1">
+                    <div class="form-check form-switch">
                       <input class="form-check-input" type="checkbox" name="showNotifications" id="notificationsCheckBox" value="true">
                       <label class="form-check-label" for="notificationsCheckBox">Show notifications</label>
                     </div>
@@ -397,8 +403,17 @@
               <textarea class="form-control form-control-sm" id="edit-note" rows="2"></textarea>
             </div>
             <div class="mb-2">
-              <label class="form-label small mb-1">TOTP secret (base32) - optional</label>
-              <div class="input-group input-group-sm">
+              <label class="form-label small mb-1">2FA / TOTP - optional</label>
+              <div id="edit-totp-status" class="small d-none">
+                <div class="d-flex align-items-center justify-content-between gap-2">
+                  <span class="text-truncate"><span id="edit-totp-status-icon"></span> <span id="edit-totp-status-text"></span></span>
+                  <span class="d-flex gap-1 flex-shrink-0">
+                    <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2" id="edit-totp-change">Replace</button>
+                    <button type="button" class="btn btn-sm btn-outline-danger py-0 px-2" id="edit-totp-remove">Remove</button>
+                  </span>
+                </div>
+              </div>
+              <div id="edit-totp-fields" class="input-group input-group-sm">
                 <input type="text" class="form-control" id="edit-totp-secret" placeholder="JBSWY3DPEHPK3PXP">
                 <input type="text" class="form-control" id="edit-totp-label" placeholder="label (optional)">
               </div>

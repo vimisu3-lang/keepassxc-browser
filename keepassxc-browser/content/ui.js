@@ -342,7 +342,14 @@ Element.prototype.getLowerCaseAttribute = function(attr) {
 Element.prototype._attachShadow = Element.prototype.attachShadow;
 Element.prototype.attachShadow = function () {
     try {
-        return this._attachShadow({ mode: 'closed' });
+        const shadowRoot = this._attachShadow({ mode: 'closed' });
+
+        // Mark the Shadow DOM trees created by the extension, so their content is not handled as page content
+        if (shadowRoot) {
+            shadowRoot._kpxcUI = true;
+        }
+
+        return shadowRoot;
     } catch (e) {
         logError(e);
     }

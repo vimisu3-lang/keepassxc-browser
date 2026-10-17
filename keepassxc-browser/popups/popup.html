@@ -57,6 +57,10 @@
 
         <!-- Dropdown menu -->
         <div id="rf-menu" class="rf-menu d-none">
+          <button class="rf-menu-item" id="menu-generator">
+            <i class="fa fa-key" aria-hidden="true"></i> Generate password
+          </button>
+          <div class="rf-menu-sep"></div>
           <button class="rf-menu-item" id="menu-options">
             <i class="fa fa-cog" aria-hidden="true"></i> Settings
           </button>
@@ -112,6 +116,9 @@
               <label class="form-label small mb-1">Password</label>
               <div class="input-group input-group-sm">
                 <input type="password" class="form-control" id="edit-password">
+                <button class="btn btn-outline-secondary" id="edit-generate-password" title="Generate password" type="button">
+                  <i class="fa fa-key" aria-hidden="true"></i>
+                </button>
                 <button class="btn btn-outline-secondary" id="edit-toggle-password" title="Show password" type="button">
                   <i class="fa fa-eye" aria-hidden="true"></i>
                 </button>
@@ -130,8 +137,17 @@
               <textarea class="form-control form-control-sm" id="edit-note" rows="2"></textarea>
             </div>
             <div class="mb-2">
-              <label class="form-label small mb-1">TOTP secret (base32) - optional</label>
-              <div class="input-group input-group-sm">
+              <label class="form-label small mb-1">2FA / TOTP - optional</label>
+              <div id="edit-totp-status" class="small d-none">
+                <div class="d-flex align-items-center justify-content-between gap-2">
+                  <span class="text-truncate"><span id="edit-totp-status-icon"></span> <span id="edit-totp-status-text"></span></span>
+                  <span class="d-flex gap-1 flex-shrink-0">
+                    <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2" id="edit-totp-change">Replace</button>
+                    <button type="button" class="btn btn-sm btn-outline-danger py-0 px-2" id="edit-totp-remove">Remove</button>
+                  </span>
+                </div>
+              </div>
+              <div id="edit-totp-fields" class="input-group input-group-sm">
                 <input type="text" class="form-control" id="edit-totp-secret" placeholder="JBSWY3DPEHPK3PXP">
                 <input type="text" class="form-control" id="edit-totp-label" placeholder="label (optional)">
               </div>
@@ -157,10 +173,10 @@
           <div class="modal-body">
             <div class="input-group input-group-sm mb-2">
               <input type="text" class="form-control" id="gen-password" readonly>
-              <button class="btn btn-outline-secondary" id="gen-copy" title="Copy">
+              <button class="btn btn-outline-secondary" id="gen-copy" title="Copy" type="button">
                 <i class="fa fa-copy" aria-hidden="true"></i>
               </button>
-              <button class="btn btn-outline-secondary" id="gen-again" title="Regenerate">
+              <button class="btn btn-outline-secondary" id="gen-again" title="Regenerate" type="button">
                 <i class="fa fa-refresh" aria-hidden="true"></i>
               </button>
             </div>
@@ -170,7 +186,21 @@
                 <label class="form-check-label"><input class="form-check-input me-1" type="checkbox" id="gen-symbols" checked> Symbols</label>
                 <label class="form-check-label"><input class="form-check-input me-1" type="checkbox" id="gen-numbers" checked> Numbers</label>
               </div>
+              <div class="col-6">
+                <label class="form-check-label"><input class="form-check-input me-1" type="checkbox" id="gen-uppercase" checked> Uppercase</label>
+              </div>
+              <div class="col-6">
+                <label class="form-check-label"><input class="form-check-input me-1" type="checkbox" id="gen-lowercase" checked> Lowercase</label>
+              </div>
+              <div class="col-12">
+                <label class="form-check-label"><input class="form-check-input me-1" type="checkbox" id="gen-ambiguous"> Exclude look-alike characters (0 O I l 1)</label>
+              </div>
             </div>
+            <div id="gen-error" class="text-danger small mt-2 d-none"></div>
+          </div>
+          <div class="modal-footer py-2">
+            <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Close</button>
+            <button type="button" class="btn btn-sm btn-primary" id="gen-new-entry">Create entry</button>
           </div>
         </div>
       </div>

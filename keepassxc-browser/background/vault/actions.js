@@ -133,6 +133,38 @@ const createVaultActions = function(deps) {
             return { success: true };
         },
 
+        // Fill the current 2FA code of an entry into the active tab (no URL match required)
+        'pwsave_fill_totp': async function(_tab, args = []) {
+            const [ uuid, tabId ] = args;
+            if (!vaultManager.isUnlocked) return { success: false, error: 'VAULT_LOCKED' };
+
+            const code = await vaultManager.getTotpCode(uuid);
+            if (!code) return { success: false, error: 'No 2FA code for this entry' };
+
+            const targetTabId = tabId || tabs.currentTabId;
+            if (!targetTabId || targetTabId < 1) {
+                return { success: false, error: 'No active tab' };
+            }
+
+            try {
+                const filled = await browser.tabs.sendMessage(targetTabId, {
+                    action: 'fill_specific_totp',
+                    code: code
+                });
+                if (!filled) {
+                    return { success: false, error: 'No 2FA field on this page' };
+                }
+                try {
+                    await vaultManager.bumpUsage(uuid);
+                } catch {
+                    /* best effort */
+                }
+                return { success: true, data: { code } };
+            } catch (e) {
+                return { success: false, error: 'No content script on this page' };
+            }
+        },
+
         // Fill a specific entry on the given tab (does NOT require URL match).
         // tabId: target tab; if not provided, the current active tab is used.
         'pwsave_fill_entry': async function(_tab, args = []) {

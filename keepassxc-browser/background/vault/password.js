@@ -13,20 +13,32 @@ const generatePassword = function(options) {
 
     const opts = Object.assign({}, DEFAULT_GENERATOR_SETTINGS, options || {});
 
-    let allowedChars = '';
-    if (opts.useLowercase) allowedChars += lowercaseChars;
-    if (opts.useUppercase) allowedChars += uppercaseChars;
-    if (opts.useNumbers) allowedChars += digitChars;
-    if (opts.useSymbols) allowedChars += symbolChars;
-
-    if (opts.excludeAmbiguous) {
-        for (const char of ambiguousChars) {
-            allowedChars = allowedChars.replace(char, '');
+    const withoutAmbiguous = function(chars) {
+        let result = chars;
+        if (opts.excludeAmbiguous) {
+            for (const char of ambiguousChars) {
+                result = result.replace(char, '');
+            }
         }
+        return result;
+    };
+
+    const allowedDigits = withoutAmbiguous(digitChars);
+    const allowedSymbols = withoutAmbiguous(symbolChars);
+
+    let allowedChars = '';
+    if (opts.useLowercase) allowedChars += withoutAmbiguous(lowercaseChars);
+    if (opts.useUppercase) allowedChars += withoutAmbiguous(uppercaseChars);
+    if (opts.useNumbers) allowedChars += allowedDigits;
+    if (opts.useSymbols) allowedChars += allowedSymbols;
+
+    // Never return a broken password if every character set is disabled
+    if (allowedChars.length === 0) {
+        allowedChars = withoutAmbiguous(lowercaseChars);
     }
 
-    const minDigits = Math.max(0, Math.min(opts.minDigits || 0, opts.length));
-    const minSymbols = Math.max(0, Math.min(opts.minSymbols || 0, opts.length - minDigits));
+    const minDigits = opts.useNumbers ? Math.max(0, Math.min(opts.minDigits || 0, opts.length)) : 0;
+    const minSymbols = opts.useSymbols ? Math.max(0, Math.min(opts.minSymbols || 0, opts.length - minDigits)) : 0;
 
     const getRandomChar = function(chars) {
         return chars[crypto.getRandomValues(new Uint32Array(1))[0] % chars.length];
@@ -34,10 +46,10 @@ const generatePassword = function(options) {
 
     const passwordArray = [];
     for (let i = 0; i < minDigits; i++) {
-        passwordArray.push(getRandomChar(digitChars));
+        passwordArray.push(getRandomChar(allowedDigits));
     }
     for (let i = 0; i < minSymbols; i++) {
-        passwordArray.push(getRandomChar(symbolChars));
+        passwordArray.push(getRandomChar(allowedSymbols));
     }
 
     while (passwordArray.length < opts.length) {

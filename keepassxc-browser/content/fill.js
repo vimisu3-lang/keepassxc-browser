@@ -192,6 +192,60 @@ kpxcFill.fillSegmentedTotp = async function(elem, val, totpInputs) {
     }
 };
 
+// Fill a TOTP code requested from the popup (works without a loaded credential list)
+kpxcFill.fillTotpCode = async function(code) {
+    if (!code) {
+        return false;
+    }
+
+    const isUsable = (field) => field?.isConnected && matchesWithNodeName(field, 'INPUT');
+
+    // 1) Segmented OTP inputs (e.g. one box per digit)
+    for (const comb of kpxc.combinations) {
+        if (comb.totpInputs?.length > 0) {
+            await kpxcFill.fillSegmentedTotp(comb.totpInputs[0], code, comb.totpInputs);
+            return true;
+        }
+    }
+
+    // 2) TOTP field detected for a login combination or by the TOTP icon
+    const candidates = [];
+    for (const comb of kpxc.combinations) {
+        if (isUsable(comb.totp)) {
+            candidates.push(comb.totp);
+        }
+    }
+    for (const icon of kpxcTOTPIcons.icons) {
+        if (isUsable(icon.inputField)) {
+            candidates.push(icon.inputField);
+        }
+    }
+
+    // 3) Focused field, when it looks like an OTP input
+    if (isUsable(document.activeElement) && kpxcTOTPIcons.isValid(document.activeElement, true)) {
+        candidates.push(document.activeElement);
+    }
+
+    // 4) Last resort: any visible input that looks like an OTP field
+    if (candidates.length === 0) {
+        for (const input of document.querySelectorAll('input')) {
+            if (input.offsetWidth > 0 && kpxcTOTPIcons.isValid(input, true)) {
+                candidates.push(input);
+                break;
+            }
+        }
+    }
+
+    const field = candidates.find(isUsable);
+    if (!field) {
+        logDebug('Error: No TOTP field found on this page.');
+        return false;
+    }
+
+    await kpxcFill.setValue(field, code);
+    return true;
+};
+
 // Fill requested from username icon
 kpxcFill.fillFromUsernameIcon = async function(combination) {
     await kpxc.receiveCredentialsIfNecessary();
@@ -374,6 +428,22 @@ kpxcFill.setValue = async function(field, value, forced = false) {
     await kpxcFill.setValueWithChange(field, value, forced);
 };
 
+// Sets a value to an input field. Frameworks like React may define a value setter for the element
+// instance (value tracker). Setting the value directly updates the tracker as well, and the framework
+// ignores the following input event. The native setter from the prototype bypasses the tracker, so
+// the framework sees the change as a real one.
+const setFieldValue = function(field, value) {
+    const valueDescriptor = Object.getOwnPropertyDescriptor(field, 'value');
+    const prototypeSetter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(field), 'value')?.set;
+
+    if (valueDescriptor?.set && prototypeSetter) {
+        prototypeSetter.call(field, value);
+        return;
+    }
+
+    field.value = value;
+};
+
 // Sets a new value to input field and triggers necessary events
 kpxcFill.setValueWithChange = async function(field, value, forced = false) {
     if (!field || (field?.readOnly && !forced)) {
@@ -407,7 +477,7 @@ kpxcFill.setValueWithChange = async function(field, value, forced = false) {
     field.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: false, key: value }));
     field.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: false, inputType: 'insertText', data: value }));
     field.dispatchEvent(new KeyboardEvent('keypress', { bubbles: true, cancelable: false, key: value }));
-    field.value = value;
+    setFieldValue(field, value);
     field.dispatchEvent(new Event('input', { bubbles: true, cancelable: false }));
     field.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, cancelable: false, key: value }));
     field.dispatchEvent(new Event('change', { bubbles: true, cancelable: false }));
