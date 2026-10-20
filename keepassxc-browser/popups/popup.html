@@ -10,6 +10,8 @@
     <script src="../common/browser-polyfill.min.js"></script>
     <script src="../common/global.js"></script>
     <script src="../common/global_ui.js"></script>
+<script src="../common/totp-input.js"></script>
+<script src="../common/jsQR.js"></script>
     <script src="../bootstrap/bootstrap.min.js"></script>
     <script defer src="popup.js"></script>
   </head>
@@ -147,9 +149,14 @@
                   </span>
                 </div>
               </div>
-              <div id="edit-totp-fields" class="input-group input-group-sm">
-                <input type="text" class="form-control" id="edit-totp-secret" placeholder="JBSWY3DPEHPK3PXP">
-                <input type="text" class="form-control" id="edit-totp-label" placeholder="label (optional)">
+              <div id="edit-totp-fields" class="d-none">
+                <div class="input-group input-group-sm mb-1">
+                  <input type="text" class="form-control" id="edit-totp-secret" placeholder="Secret key or otpauth:// URI">
+                  <button type="button" class="btn btn-outline-secondary" id="edit-totp-scan" title="Scan a QR code shown on the page">
+                    <i class="fa fa-qrcode" aria-hidden="true"></i>
+                  </button>
+                </div>
+                <input type="text" class="form-control form-control-sm" id="edit-totp-label" placeholder="label (optional)">
               </div>
             </div>
           </div>

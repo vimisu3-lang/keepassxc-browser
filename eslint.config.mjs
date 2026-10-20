@@ -13,7 +13,7 @@ const compat = new FlatCompat({
     allConfig: js.configs.all
 });
 
-export default defineConfig([globalIgnores(["**/*.min.js"]), {
+export default defineConfig([globalIgnores(["**/*.min.js", "keepassxc-browser/common/jsQR.js", "keepassxc-browser/bootstrap/**"]), {
     files: ["keepassxc-browser/background/vault/**/*.js", "keepassxc-browser/background/init.js", "keepassxc-browser/background/event.js", "keepassxc-browser/background/keepass.js", "keepassxc-browser/background/background_service.js"],
     languageOptions: {
         globals: {
@@ -144,6 +144,7 @@ export default defineConfig([globalIgnores(["**/*.min.js"]), {
             isFirefox: "readonly",
             isIframeAllowed: "readonly",
             isSafari: "readonly",
+            jsQR: "readonly",
             keepass: "readonly",
             keepassClient: "readonly",
             kpActions: "readonly",
@@ -163,6 +164,7 @@ export default defineConfig([globalIgnores(["**/*.min.js"]), {
             kpxcSites: "readonly",
             kpxcTOTPAutocomplete: "readonly",
             kpxcTOTPIcons: "readonly",
+            kpxcTotpInput: "readonly",
             kpxcUI: "readonly",
             kpxcUserAutocomplete: "readonly",
             kpxcUsernameIcons: "readonly",

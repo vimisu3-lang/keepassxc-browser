@@ -546,6 +546,10 @@ const updateTotpEditor = function() {
 
     $('#edit-totp-status').classList.toggle('d-none', showFields);
     $('#edit-totp-fields').classList.toggle('d-none', !showFields);
+    if (!showFields) {
+        showTotpError('');
+    }
+
     if (showFields) {
         return;
     }
@@ -559,6 +563,12 @@ const updateTotpEditor = function() {
     text.classList.toggle('text-muted', !entriesState.totpRemoveRequested);
     $('#edit-totp-change').textContent = entriesState.totpRemoveRequested ? 'Undo' : 'Replace';
     $('#edit-totp-remove').classList.toggle('d-none', entriesState.totpRemoveRequested);
+};
+
+const showTotpError = function(message) {
+    const error = $('#edit-totp-error');
+    error.textContent = message || '';
+    error.classList.toggle('d-none', !message);
 };
 
 const openEntryModal = function(entry) {
@@ -578,6 +588,7 @@ const openEntryModal = function(entry) {
     entriesState.totpRemoveRequested = false;
     $('#edit-totp-secret').value = '';
     $('#edit-totp-label').value = '';
+    showTotpError('');
     updateTotpEditor();
     $('#delete-entry-button').classList.toggle('d-none', !entry);
     renderGroupOptions();
@@ -591,14 +602,22 @@ const saveEntry = async function() {
     const url = $('#edit-url').value.trim();
     const group = $('#edit-group').value.trim();
     const note = $('#edit-note').value;
-    const totpSecret = $('#edit-totp-secret').value.trim().replace(/\s/g, '');
+    const totpInput = $('#edit-totp-secret').value.trim();
     const totpLabel = $('#edit-totp-label').value.trim();
+    showTotpError('');
 
     // undefined = keep the stored 2FA secret untouched
     let totp;
-    if (totpSecret) {
-        const label = encodeURIComponent(totpLabel || name || login || 'TOTP');
-        totp = `otpauth://totp/${label}?secret=${encodeURIComponent(totpSecret).replace(/%20/g, '')}`;
+    if (totpInput) {
+        const parsed = kpxcTotpInput.parse(totpInput);
+        if (!parsed) {
+            showTotpError('Invalid 2FA secret. Use a Base32 key or an otpauth:// URI');
+            return;
+        }
+
+        // A URI brings its own label: only an explicitly typed label overrides it
+        const fallbackLabel = parsed.uri ? totpLabel : (totpLabel || name || login);
+        totp = kpxcTotpInput.toUri(parsed, fallbackLabel);
     } else if (entriesState.totpRemoveRequested && entriesState.totpOriginal) {
         totp = '';
     }

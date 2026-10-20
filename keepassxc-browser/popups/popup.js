@@ -517,6 +517,71 @@ const fillTotpOnTab = async function(entry) {
 };
 
 //--------------------------------------------------------------------------
+// TOTP QR code scanning
+//--------------------------------------------------------------------------
+
+const setQrScanState = function(busy) {
+    const button = $('#edit-totp-scan');
+    button.disabled = busy;
+    button.innerHTML = busy
+        ? '<i class="fa fa-spinner fa-spin" aria-hidden="true"></i>'
+        : '<i class="fa fa-qrcode" aria-hidden="true"></i>';
+};
+
+// Decodes the first QR code from an image URL (e.g. a screenshot of the page)
+const decodeQrCode = async function(imageUrl) {
+    const image = new Image();
+    image.src = imageUrl;
+    await image.decode();
+
+    const canvas = document.createElement('canvas');
+    canvas.width = image.naturalWidth;
+    canvas.height = image.naturalHeight;
+
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    context.drawImage(image, 0, 0);
+
+    const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+    const result = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'attemptBoth' });
+    return result ? result.data : null;
+};
+
+// Scans the visible part of the active tab for a TOTP QR code and fills the 2FA fields
+const scanTotpQrCode = async function() {
+    const tab = await getCurrentTab();
+    if (!tab || tab.id === undefined) {
+        showToast('No active tab');
+        return;
+    }
+
+    setQrScanState(true);
+    try {
+        const screenshot = await browser.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
+        const text = await decodeQrCode(screenshot);
+        if (!text) {
+            showToast('No QR code found. Scroll the QR code into view and try again');
+            return;
+        }
+
+        const parsed = kpxcTotpInput.parse(text);
+        if (!parsed) {
+            showToast('The QR code does not contain a TOTP secret');
+            return;
+        }
+
+        // A full URI keeps the algorithm, digits and period of the QR code
+        $('#edit-totp-secret').value = parsed.uri || parsed.secret;
+        $('#edit-totp-label').value = parsed.label || parsed.issuer || '';
+        showToast(parsed.issuer ? `2FA found: ${parsed.issuer}` : '2FA secret found');
+    } catch (e) {
+        console.error('QR code scanning failed:', e);
+        showToast('Could not scan the page');
+    } finally {
+        setQrScanState(false);
+    }
+};
+
+//--------------------------------------------------------------------------
 // Entry modal (add / edit)
 //--------------------------------------------------------------------------
 
@@ -596,14 +661,21 @@ const saveEntry = async function() {
     const url = $('#edit-url').value.trim();
     const group = $('#edit-group').value.trim();
     const note = $('#edit-note').value;
-    const totpSecret = $('#edit-totp-secret').value.trim().replace(/\s/g, '');
+    const totpInput = $('#edit-totp-secret').value.trim();
     const totpLabel = $('#edit-totp-label').value.trim();
 
     // undefined = keep the stored 2FA secret untouched
     let totp;
-    if (totpSecret) {
-        const label = encodeURIComponent(totpLabel || name || login || 'TOTP');
-        totp = `otpauth://totp/${label}?secret=${encodeURIComponent(totpSecret).replace(/%20/g, '')}`;
+    if (totpInput) {
+        const parsed = kpxcTotpInput.parse(totpInput);
+        if (!parsed) {
+            showToast('Invalid 2FA secret. Use a Base32 key or an otpauth:// URI');
+            return;
+        }
+
+        // A URI brings its own label: only an explicitly typed label overrides it
+        const fallbackLabel = parsed.uri ? totpLabel : (totpLabel || name || login);
+        totp = kpxcTotpInput.toUri(parsed, fallbackLabel);
     } else if (totpRemoveRequested && totpOriginal) {
         totp = '';
     }
@@ -846,6 +918,8 @@ const initEvents = function() {
     $('#edit-toggle-password').addEventListener('click', () => {
         setPasswordVisible($('#edit-password').type !== 'text');
     });
+
+    $('#edit-totp-scan').addEventListener('click', scanTotpQrCode);
 
     $('#edit-generate-password').addEventListener('click', async () => {
         const response = await requestPassword();
